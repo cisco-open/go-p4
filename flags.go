@@ -9,15 +9,15 @@
 package main
 
 import (
-        "flag"
-        "log"
-        "net"
+	"flag"
+	"log"
+	"net"
 )
 
 // Command line args
 var (
-	outputDir = flag.String("output_dir", "./output", "Output Directory")
-	serverIP  = flag.String("server_ip", "192.168.0.1", "P4RT Server IP")
+	outputDir  = flag.String("output_dir", "./output", "Output Directory")
+	serverIP   = flag.String("server_ip", "192.168.0.1", "P4RT Server IP")
 	serverPort = flag.Int("server_port", 57400, "P4RT Server Port")
 )
 

@@ -6,7 +6,7 @@
  * All rights reserved.
  * ------------------------------------------------------------------
  */
-package main
+package utils
 
 import (
         "log"
@@ -14,16 +14,21 @@ import (
         "path/filepath"
 )
 
-func initLogger() {
-	err := os.MkdirAll(*outputDir, 0744)
+// Set the standard logger
+func UtilsInitLogger(outputDir string) {
+	err := os.MkdirAll(outputDir, 0744)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	logFile := filepath.Join(*outputDir, "log.txt")
+	logFile := filepath.Join(outputDir, "log.txt")
 	file, err1 := os.Create(logFile)
 	if err1 != nil {
 		log.Fatal(err1)
 	}
-	logger = log.New(file, "", log.LstdFlags|log.Lshortfile)
+
+	// Redirect to file
+	log.SetOutput(file)
+        //log.SetPrefix("")
+        log.SetFlags(log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
 }

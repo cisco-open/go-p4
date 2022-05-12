@@ -9,65 +9,45 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"fmt"
-	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
-	grpc "google.golang.org/grpc"
 	"log"
-        "os"
-	"strconv"
+	"os"
+	"time"
+	"wwwin-github.cisco.com/rehaddad/go-p4/p4rt_client"
+	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
 	// 	codes "google.golang.org/grpc/codes"
 	// 	status1 "google.golang.org/grpc/status"
 )
 
-// Globals
-var (
-	logger    *log.Logger
-)
-
+// XXX Should this be test case 1? Or is this an entrance to regression 1?
+//     How are tests written? This is not a script...
 func main() {
 	flag.Parse()
-	initLogger()
+	utils.UtilsInitLogger(*outputDir)
 	validateArgs()
-	logger.Println("Called as:", os.Args)
+	log.Println("Called as:", os.Args)
 
-	// Setup the connection with the server
-	address := fmt.Sprintf("%s:%s", *serverIP, strconv.Itoa(*serverPort))
-	logger.Printf("Connecting to %s\n", address)
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	// XXX Read some JSON file to configure the setup
+
+	// For now, Setup the connection with the server
+	p4rtClient := p4rt_client.NewP4RTClient(&p4rt_client.P4RTClientParams{
+		Name:       "Client1",
+		ServerIP:   *serverIP,
+		ServerPort: *serverPort,
+	})
+	err := p4rtClient.ServerConnect()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close()
+	defer p4rtClient.ServerDisconnect()
 
-	// Create a new NewP4RuntimeClient instance
-	client := p4_v1.NewP4RuntimeClient(conn)
-
-	// RPC and setup the stream
-	stream, gerr := client.StreamChannel(context.Background())
-	if gerr != nil {
-		log.Fatal(gerr)
-	}
-
-	// For ever read from stream
+	// Test Driver
 	for {
-		event, stream_err := stream.Recv()
-		if stream_err != nil {
-			logger.Println("Client Recv Error %v", stream_err)
-			break
-		}
-
-		// XXX Remove unecessary entries
-		switch event.Update.(type) {
-		case *p4_v1.StreamMessageResponse_Arbitration:
-		case *p4_v1.StreamMessageResponse_Packet:
-		case *p4_v1.StreamMessageResponse_Digest:
-		case *p4_v1.StreamMessageResponse_IdleTimeoutNotification:
-		case *p4_v1.StreamMessageResponse_Other:
-		case *p4_v1.StreamMessageResponse_Error:
-		default:
-			logger.Printf("Received %s\n", event.String())
+		// XXX do things
+		select {
+		case <-time.After(1 * time.Second):
+			// timeout and try again
+			log.Printf("Timeout - waiting on instructions")
 		}
 	}
 }
