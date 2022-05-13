@@ -11,6 +11,7 @@ package main
 import (
 	"flag"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
+	codes "google.golang.org/grpc/codes"
 	"log"
 	"os"
 	"time"
@@ -48,10 +49,75 @@ func main() {
 		log.Fatal(err)
 	}
 
-	p4rtClient.StreamChannelSendArbitration(streamId, 3, &p4_v1.Uint128{
-		High: 0,
-		Low:  1,
+	// XXX The set/get arbitration here may be wrapped in a single function
+	// Note that, the server can send async arb resp messages
+	// So, we can loop on StreamChannelGetLastArbitrationResp() unti
+	// we get the expected result
+
+	err = p4rtClient.StreamChannelSendArbitration(streamId, &p4_v1.StreamMessageRequest{
+		Update: &p4_v1.StreamMessageRequest_Arbitration{
+			Arbitration: &p4_v1.MasterArbitrationUpdate{
+				DeviceId: 3,
+				ElectionId: &p4_v1.Uint128{
+					High: 0,
+					Low:  1,
+				},
+			},
+		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	lastSeqNum, arbMsg, arbErr := p4rtClient.StreamChannelGetLastArbitrationResp(streamId, 1)
+	if arbErr != nil {
+		log.Fatal(arbErr)
+	}
+	isMaster := arbMsg.Status.Code == int32(codes.OK)
+
+	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
+
+	var streamId2 uint32
+	streamId2, err = p4rtClient.StreamChannelCreate()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// XXX The set/get arbitration here may be wrapped in a single function
+	// Note that, the server can send async arb resp messages
+	// So, we can loop on StreamChannelGetLastArbitrationResp() unti
+	// we get the expected result
+
+	err = p4rtClient.StreamChannelSendArbitration(streamId2, &p4_v1.StreamMessageRequest{
+		Update: &p4_v1.StreamMessageRequest_Arbitration{
+			Arbitration: &p4_v1.MasterArbitrationUpdate{
+				DeviceId: 3,
+				ElectionId: &p4_v1.Uint128{
+					High: 0,
+					Low:  100,
+				},
+			},
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	lastSeqNum2, arbMsg2, arbErr2 := p4rtClient.StreamChannelGetLastArbitrationResp(streamId2, 1)
+	if arbErr2 != nil {
+		log.Fatal(arbErr2)
+	}
+	isMaster2 := arbMsg2.Status.Code == int32(codes.OK)
+
+	log.Printf("Got Master(%v) %d %s", isMaster2, lastSeqNum2, arbMsg2.String())
+
+	// Master2 should have preempted
+	lastSeqNum, arbMsg, arbErr = p4rtClient.StreamChannelGetLastArbitrationResp(streamId, 2)
+	if arbErr != nil {
+		log.Fatal(arbErr)
+	}
+	isMaster = arbMsg.Status.Code == int32(codes.OK)
+	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
 
 	// Test Driver
 	for {

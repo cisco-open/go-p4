@@ -28,35 +28,50 @@ type P4RTClientSession struct {
 	streamId uint32
 	stream   p4_v1.P4Runtime_StreamChannelClient
 
-	stop_mu sync.Mutex // Protects the following:
-	stop    bool
-	// end stop_mu Protection
+	stopMu sync.Mutex // Protects the following:
+	stop   bool
+	// end stopMu Protection
 
-	// XXX Do we need to mutex protect these?
-	ElectionId *p4_v1.Uint128
-	DeviceId   uint64
+	lastRespArbrMu   sync.Mutex
+	lastRespArbrCond *sync.Cond
+	lastRespArbrSeq  uint64
+	lastRespArbr     *p4_v1.MasterArbitrationUpdate
 }
 
 func (p *P4RTClientSession) ShouldStop() bool {
-	p.stop_mu.Lock()
-	defer p.stop_mu.Unlock()
+	p.stopMu.Lock()
+	defer p.stopMu.Unlock()
 	return p.stop
 }
 
 func (p *P4RTClientSession) Stop() {
-	p.stop_mu.Lock()
-	defer p.stop_mu.Unlock()
+	p.stopMu.Lock()
+	defer p.stopMu.Unlock()
 	p.stop = true
 }
 
+func NewP4RTClientSession(streamId uint32, stream p4_v1.P4Runtime_StreamChannelClient) *P4RTClientSession {
+	cSession := &P4RTClientSession{
+		streamId: streamId,
+		stream:   stream,
+	}
+
+	// Initialize
+	cSession.lastRespArbrCond = sync.NewCond(&cSession.lastRespArbrMu)
+
+	return cSession
+}
+
+// We want the Client to be more or less stateless so that we can do negative testing
+// This would require the test driver to explicitly set every attribute in every message
 type P4RTClient struct {
 	params *P4RTClientParams
 
 	client_mu  sync.Mutex // Protects the following:
 	connection *grpc.ClientConn
 	p4rtClient p4_v1.P4RuntimeClient
-	streamId   uint32 // Global increasing number
-	streams    map[uint32]*P4RTClientSession
+	streamId   uint32                        // Global increasing number
+	streams    map[uint32]*P4RTClientSession // We can have multiple streams per client
 	// end client_mu Protection
 }
 
@@ -126,10 +141,7 @@ func (p *P4RTClient) StreamChannelCreate() (uint32, error) {
 	// Get a new id for this stream
 	p.streamId++
 	streamId := p.streamId
-	cSession := &P4RTClientSession{
-		streamId: streamId,
-		stream:   stream,
-	}
+	cSession := NewP4RTClientSession(streamId, stream)
 	// Add Stream to map, indexed by p.streamId
 	p.streams[streamId] = cSession
 	p.client_mu.Unlock()
@@ -161,8 +173,13 @@ func (p *P4RTClient) StreamChannelCreate() (uint32, error) {
 			// XXX Remove unecessary entries
 			switch event.Update.(type) {
 			case *p4_v1.StreamMessageResponse_Arbitration:
-				// XXX Add to buffered channel
+				session.lastRespArbrMu.Lock()
+				session.lastRespArbrSeq++
+				session.lastRespArbr = event.GetArbitration()
+				session.lastRespArbrMu.Unlock()
+				session.lastRespArbrCond.Signal()
 				log.Printf("Received %s\n", event.String())
+
 			case *p4_v1.StreamMessageResponse_Packet:
 				log.Printf("Received %s\n", event.String())
 				// XXX Add to buffered channel
@@ -190,7 +207,7 @@ func (p *P4RTClient) StreamChannelCreate() (uint32, error) {
 	return streamId, nil
 }
 
-func (p *P4RTClient) StreamChannelGet(streamId uint32) *P4RTClientSession {
+func (p *P4RTClient) streamChannelGet(streamId uint32) *P4RTClientSession {
 	p.client_mu.Lock()
 	defer p.client_mu.Unlock()
 
@@ -213,33 +230,44 @@ func (p *P4RTClient) StreamChannelDestroy(streamId uint32) {
 	}
 }
 
-func (p *P4RTClient) StreamChannelSendArbitration(streamId uint32,
-	deviceId uint64, electionId *p4_v1.Uint128) error {
+func (p *P4RTClient) StreamChannelSendArbitration(streamId uint32, msg *p4_v1.StreamMessageRequest) error {
 
-	cSession := p.StreamChannelGet(streamId)
+	cSession := p.streamChannelGet(streamId)
 	if cSession == nil {
 		return fmt.Errorf("StreamId(%d) Not found", streamId)
 	}
 
-	message := &p4_v1.StreamMessageRequest{
-		Update: &p4_v1.StreamMessageRequest_Arbitration{
-			Arbitration: &p4_v1.MasterArbitrationUpdate{
-				DeviceId:   deviceId,
-				ElectionId: electionId,
-			},
-		},
-	}
-
-	err := cSession.stream.Send(message)
+	err := cSession.stream.Send(msg)
 	if err != nil {
-		log.Printf("ERROR Session(%d) '%s': '%s'\n", streamId, message, err)
+		log.Printf("ERROR Session(%d) '%s': '%s'\n", streamId, msg, err)
 		return err
 	}
 
-	cSession.ElectionId = electionId
-	cSession.DeviceId = deviceId
-
 	return nil
+}
+
+// Block until AT LEAST minSeqNum is observed
+func (p *P4RTClient) StreamChannelGetLastArbitrationResp(streamId uint32,
+	minSeqNum uint64) (uint64, *p4_v1.MasterArbitrationUpdate, error) {
+
+	var lastSeqNum uint64
+	var lastRespArbr *p4_v1.MasterArbitrationUpdate
+
+	cSession := p.streamChannelGet(streamId)
+	if cSession == nil {
+		return lastSeqNum, lastRespArbr, fmt.Errorf("StreamId(%d) Not found", streamId)
+	}
+
+	cSession.lastRespArbrMu.Lock()
+	for cSession.lastRespArbrSeq < minSeqNum {
+		cSession.lastRespArbrCond.Wait()
+
+	}
+	lastSeqNum = cSession.lastRespArbrSeq
+	lastRespArbr = cSession.lastRespArbr
+	cSession.lastRespArbrMu.Unlock()
+
+	return lastSeqNum, lastRespArbr, nil
 }
 
 //
