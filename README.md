@@ -42,5 +42,13 @@ go get wwwin-github.cisco.com/rehaddad/go-p4
             These can be 1-to-1 channels to rpc?
         - level 2 i.e. some preset functions that drive level 1 to some state
             E.g. establish mastership
-    
+
+- scale session management with different/same device-id/LC/node in Paralell; 18LC * 4NP * 4[Primary+Backup] = 288/Box
+- API to call the rpc/functions with flexibility to modify all the fields
+- client lib to handle different RPC messages
+- packet encode/decode module to help packet I/O [GDP, Ping, Traceroute, LLDP]
+- check lib to handle the rpc response/packet I/O result
+- p4info lib to handle p4info dynmically, need to set/unset, read/write the related table/fields
+- need to support packet stats
+- logging infra to record the message/packets
     

@@ -10,6 +10,7 @@ package main
 
 import (
 	"flag"
+	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	"log"
 	"os"
 	"time"
@@ -35,11 +36,22 @@ func main() {
 		ServerIP:   *serverIP,
 		ServerPort: *serverPort,
 	})
+
 	err := p4rtClient.ServerConnect()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer p4rtClient.ServerDisconnect()
+
+	var streamId uint32
+	streamId, err = p4rtClient.StreamChannelCreate()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	p4rtClient.StreamChannelSendArbitration(streamId, 3, &p4_v1.Uint128{
+		High: 0,
+		Low:  1,
+	})
 
 	// Test Driver
 	for {
@@ -50,4 +62,9 @@ func main() {
 			log.Printf("Timeout - waiting on instructions")
 		}
 	}
+
+	p4rtClient.StreamChannelDestroy(streamId)
+
+	p4rtClient.ServerDisconnect()
+
 }
