@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"time"
+	"wwwin-github.cisco.com/rehaddad/go-p4/p4info/wbb"
 	"wwwin-github.cisco.com/rehaddad/go-p4/p4rt_client"
 	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
 	// 	codes "google.golang.org/grpc/codes"
@@ -77,6 +78,28 @@ func main() {
 
 	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
 
+	p4Info, p4InfoErr := utils.P4InfoLoad(p4InfoFile)
+	if p4InfoErr != nil {
+		log.Fatal(p4InfoErr)
+	}
+
+	err = p4rtClient.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
+		DeviceId: 3,
+		ElectionId: &p4_v1.Uint128{
+			High: 0,
+			Low:  1,
+		},
+		Action: p4_v1.SetForwardingPipelineConfigRequest_VERIFY_AND_COMMIT,
+		Config: &p4_v1.ForwardingPipelineConfig{
+			P4Info: &p4Info,
+			Cookie: &p4_v1.ForwardingPipelineConfig_Cookie{
+				Cookie: 15,
+			},
+		},
+	})
+
+	// Second session same client
+
 	var streamId2 uint32
 	streamId2, err = p4rtClient.StreamChannelCreate()
 	if err != nil {
@@ -119,18 +142,32 @@ func main() {
 	isMaster = arbMsg.Status.Code == int32(codes.OK)
 	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
 
+	entity := wbb.AclWbbIngressTableEntryGet(&wbb.AclWbbIngressTableEntryInfo{
+		IsIpv4:          1,
+		IsIpv6:          1,
+		EtherType:       0x6007,
+		EtherTypeMask:   0xFFFF,
+		Ttl:             0x1,
+		TtlMask:         0xFF,
+		OuterVlanId:     4000,
+		OuterVlanIdMask: 0xFFF,
+	})
+	log.Printf("%s", entity)
+
+	// Try removing the master
+	p4rtClient.StreamChannelDestroy(streamId2)
+
 	// Test Driver
+ForEver:
 	for {
 		// XXX do things
 		select {
-		case <-time.After(1 * time.Second):
-			// timeout and try again
-			log.Printf("Timeout - waiting on instructions")
+		case <-time.After(5 * time.Second):
+			break ForEver
 		}
 	}
 
 	p4rtClient.StreamChannelDestroy(streamId)
 
 	p4rtClient.ServerDisconnect()
-
 }

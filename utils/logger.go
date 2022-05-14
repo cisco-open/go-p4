@@ -9,9 +9,9 @@
 package utils
 
 import (
-        "log"
-        "os"
-        "path/filepath"
+	"log"
+	"os"
+	"path/filepath"
 )
 
 // Set the standard logger
@@ -29,6 +29,6 @@ func UtilsInitLogger(outputDir string) {
 
 	// Redirect to file
 	log.SetOutput(file)
-        //log.SetPrefix("")
-        log.SetFlags(log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
+	//log.SetPrefix("")
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }

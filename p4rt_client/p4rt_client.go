@@ -25,8 +25,9 @@ type P4RTClientParams struct {
 }
 
 type P4RTClientSession struct {
-	streamId uint32
-	stream   p4_v1.P4Runtime_StreamChannelClient
+	streamId   uint32
+	stream     p4_v1.P4Runtime_StreamChannelClient
+	cancelFunc context.CancelFunc
 
 	stopMu sync.Mutex // Protects the following:
 	stop   bool
@@ -50,10 +51,12 @@ func (p *P4RTClientSession) Stop() {
 	p.stop = true
 }
 
-func NewP4RTClientSession(streamId uint32, stream p4_v1.P4Runtime_StreamChannelClient) *P4RTClientSession {
+func NewP4RTClientSession(streamId uint32,
+	stream p4_v1.P4Runtime_StreamChannelClient, cancelFunc context.CancelFunc) *P4RTClientSession {
 	cSession := &P4RTClientSession{
-		streamId: streamId,
-		stream:   stream,
+		streamId:   streamId,
+		stream:     stream,
+		cancelFunc: cancelFunc,
 	}
 
 	// Initialize
@@ -127,7 +130,8 @@ func (p *P4RTClient) StreamChannelCreate() (uint32, error) {
 	p.client_mu.Unlock()
 
 	// RPC and setup the stream
-	stream, gerr := p.p4rtClient.StreamChannel(context.Background())
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	stream, gerr := p.p4rtClient.StreamChannel(ctx)
 	if gerr != nil {
 		log.Printf("ERROR Client(%s) StreamChannel: %s\n", p, gerr)
 		return 0, gerr
@@ -141,7 +145,7 @@ func (p *P4RTClient) StreamChannelCreate() (uint32, error) {
 	// Get a new id for this stream
 	p.streamId++
 	streamId := p.streamId
-	cSession := NewP4RTClientSession(streamId, stream)
+	cSession := NewP4RTClientSession(streamId, stream, cancelFunc)
 	// Add Stream to map, indexed by p.streamId
 	p.streams[streamId] = cSession
 	p.client_mu.Unlock()
@@ -218,16 +222,29 @@ func (p *P4RTClient) streamChannelGet(streamId uint32) *P4RTClientSession {
 	return nil
 }
 
+// This function can be called from the driver or from the RX routine
+// in case the serve closes the session
+// We handle race conditions here (with locks)
 func (p *P4RTClient) StreamChannelDestroy(streamId uint32) {
-	// XXX What do we need to cleanup here
-	p.client_mu.Lock()
-	defer p.client_mu.Unlock()
+	cSession := p.streamChannelGet(streamId)
+	if cSession == nil {
+		log.Printf("Could not fine RX(%d)\n", streamId)
+		return
+	}
 
+	log.Printf("Destroying RX(%d)\n", streamId)
+	// Make sure the RX Routine is going to stop
+	cSession.Stop()
+	// Force the RX Recv() to wake up
+	// (which would force the RX routing to Destroy and exit)
+	cSession.cancelFunc()
+
+	// Remove from map
+	p.client_mu.Lock()
 	if _, found := p.streams[streamId]; found {
-		log.Printf("Destroying RX(%d)\n", streamId)
-		p.streams[streamId].Stop()
 		delete(p.streams, streamId)
 	}
+	p.client_mu.Unlock()
 }
 
 func (p *P4RTClient) StreamChannelSendArbitration(streamId uint32, msg *p4_v1.StreamMessageRequest) error {
@@ -268,6 +285,22 @@ func (p *P4RTClient) StreamChannelGetLastArbitrationResp(streamId uint32,
 	cSession.lastRespArbrMu.Unlock()
 
 	return lastSeqNum, lastRespArbr, nil
+}
+
+func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelineConfigRequest) error {
+	p.client_mu.Lock()
+	if p.connection == nil {
+		p.client_mu.Unlock()
+		return fmt.Errorf("Client Not connected")
+	}
+	p.client_mu.Unlock()
+
+	_, err := p.p4rtClient.SetForwardingPipelineConfig(context.Background(), msg)
+	if err != nil {
+		log.Printf("ERROR (%s) SetForwardingPipelineConfig: %s\n", p, err)
+	}
+
+	return err
 }
 
 //
