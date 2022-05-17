@@ -303,6 +303,22 @@ func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelin
 	return err
 }
 
+func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
+	p.client_mu.Lock()
+	if p.connection == nil {
+		p.client_mu.Unlock()
+		return fmt.Errorf("Client Not connected")
+	}
+	p.client_mu.Unlock()
+
+	_, err := p.p4rtClient.Write(context.Background(), msg)
+	if err != nil {
+		log.Printf("ERROR (%s) Write: %s\n", p, err)
+	}
+
+	return err
+}
+
 //
 // Creates and Initializes a P4RT client
 //

@@ -30,7 +30,17 @@ func main() {
 	validateArgs()
 	log.Println("Called as:", os.Args)
 
-	// XXX Read some JSON file to configure the setup
+	// Read params JSON file to configure the setup
+	params, err := utils.ParameterLoad(jsonFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Params: %s", utils.ParameterToString(params))
+	log.Printf("Info: %d", params.Clients[0].Sessions[0].ElectionIdL)
+	log.Fatalf("exit")
+
+	// XXX Re-write the below based on the params
+	// Note, if client does not have a param, get it from flags.*
 
 	// For now, Setup the connection with the server
 	p4rtClient := p4rt_client.NewP4RTClient(&p4rt_client.P4RTClientParams{
@@ -39,7 +49,7 @@ func main() {
 		ServerPort: *serverPort,
 	})
 
-	err := p4rtClient.ServerConnect()
+	err = p4rtClient.ServerConnect()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,6 +88,7 @@ func main() {
 
 	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
 
+	// Load P4Info file
 	p4Info, p4InfoErr := utils.P4InfoLoad(p4InfoFile)
 	if p4InfoErr != nil {
 		log.Fatal(p4InfoErr)
@@ -97,6 +108,35 @@ func main() {
 			},
 		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Write
+	err = p4rtClient.Write(&p4_v1.WriteRequest{
+		DeviceId: 3,
+		ElectionId: &p4_v1.Uint128{
+			High: 0,
+			Low:  1,
+		},
+		Updates: wbb.AclWbbIngressTableEntryGet([]*wbb.AclWbbIngressTableEntryInfo{
+			&wbb.AclWbbIngressTableEntryInfo{
+				Type:          p4_v1.Update_INSERT,
+				EtherType:     0x6007,
+				EtherTypeMask: 0xFFFF,
+			},
+			&wbb.AclWbbIngressTableEntryInfo{
+				Type:    p4_v1.Update_INSERT,
+				IsIpv4:  0x1,
+				Ttl:     0x1,
+				TtlMask: 0xFF,
+			},
+		}),
+		Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Second session same client
 
@@ -141,18 +181,6 @@ func main() {
 	}
 	isMaster = arbMsg.Status.Code == int32(codes.OK)
 	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
-
-	entity := wbb.AclWbbIngressTableEntryGet(&wbb.AclWbbIngressTableEntryInfo{
-		IsIpv4:          1,
-		IsIpv6:          1,
-		EtherType:       0x6007,
-		EtherTypeMask:   0xFFFF,
-		Ttl:             0x1,
-		TtlMask:         0xFF,
-		OuterVlanId:     4000,
-		OuterVlanIdMask: 0xFFF,
-	})
-	log.Printf("%s", entity)
 
 	// Try removing the master
 	p4rtClient.StreamChannelDestroy(streamId2)

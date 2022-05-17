@@ -32,6 +32,7 @@ var (
 )
 
 type AclWbbIngressTableEntryInfo struct {
+	Type            p4_v1.Update_Type
 	IsIpv4          uint8
 	IsIpv6          uint8
 	EtherType       uint16
@@ -42,72 +43,75 @@ type AclWbbIngressTableEntryInfo struct {
 	OuterVlanIdMask uint16 // lower 12 bits
 }
 
-func AclWbbIngressTableEntryGet(info *AclWbbIngressTableEntryInfo) *p4_v1.Entity {
+func aclWbbIngressTableEntryGet(info *AclWbbIngressTableEntryInfo) *p4_v1.Update {
 	if info == nil {
 		log.Fatal("Nil info")
 	}
 
-	entity := &p4_v1.Entity{
-		Entity: &p4_v1.Entity_TableEntry{
-			TableEntry: &p4_v1.TableEntry{
-				TableId: WbbTableMap["acl_wbb_ingress_table"],
-				Match: []*p4_v1.FieldMatch{
-					{
-						FieldId: WbbMatchMap["is_ipv4"],
-						FieldMatchType: &p4_v1.FieldMatch_Optional_{
-							Optional: &p4_v1.FieldMatch_Optional{
-								Value: []byte{byte(info.IsIpv4)},
-							},
-						},
-					}, {
-						FieldId: WbbMatchMap["is_ipv6"],
-						FieldMatchType: &p4_v1.FieldMatch_Optional_{
-							Optional: &p4_v1.FieldMatch_Optional{
-								Value: []byte{byte(info.IsIpv6)},
-							},
-						},
-					}, {
-						FieldId: WbbMatchMap["ether_type"],
-						FieldMatchType: &p4_v1.FieldMatch_Ternary_{
-							Ternary: &p4_v1.FieldMatch_Ternary{
-								Value: []byte{
-									byte(info.EtherType >> 8),
-									byte(info.EtherType & 0xFF),
-								},
-								Mask: []byte{
-									byte(info.EtherTypeMask >> 8),
-									byte(info.EtherTypeMask & 0xFF),
+	update := &p4_v1.Update{
+		Type: info.Type,
+		Entity: &p4_v1.Entity{
+			Entity: &p4_v1.Entity_TableEntry{
+				TableEntry: &p4_v1.TableEntry{
+					TableId: WbbTableMap["acl_wbb_ingress_table"],
+					Match: []*p4_v1.FieldMatch{
+						{
+							FieldId: WbbMatchMap["is_ipv4"],
+							FieldMatchType: &p4_v1.FieldMatch_Optional_{
+								Optional: &p4_v1.FieldMatch_Optional{
+									Value: []byte{byte(info.IsIpv4)},
 								},
 							},
-						},
-					}, {
-						FieldId: WbbMatchMap["ttl"],
-						FieldMatchType: &p4_v1.FieldMatch_Ternary_{
-							Ternary: &p4_v1.FieldMatch_Ternary{
-								Value: []byte{byte(info.Ttl)},
-								Mask:  []byte{byte(info.TtlMask)},
-							},
-						},
-					}, {
-						FieldId: WbbMatchMap["outer_vlan_id"],
-						FieldMatchType: &p4_v1.FieldMatch_Ternary_{
-							Ternary: &p4_v1.FieldMatch_Ternary{
-								Value: []byte{
-									byte((info.OuterVlanId >> 8) & 0xF),
-									byte(info.OuterVlanId & 0xFF),
+						}, {
+							FieldId: WbbMatchMap["is_ipv6"],
+							FieldMatchType: &p4_v1.FieldMatch_Optional_{
+								Optional: &p4_v1.FieldMatch_Optional{
+									Value: []byte{byte(info.IsIpv6)},
 								},
-								Mask: []byte{
-									byte((info.OuterVlanIdMask >> 8) & 0xF),
-									byte(info.OuterVlanIdMask & 0xFF),
+							},
+						}, {
+							FieldId: WbbMatchMap["ether_type"],
+							FieldMatchType: &p4_v1.FieldMatch_Ternary_{
+								Ternary: &p4_v1.FieldMatch_Ternary{
+									Value: []byte{
+										byte(info.EtherType >> 8),
+										byte(info.EtherType & 0xFF),
+									},
+									Mask: []byte{
+										byte(info.EtherTypeMask >> 8),
+										byte(info.EtherTypeMask & 0xFF),
+									},
+								},
+							},
+						}, {
+							FieldId: WbbMatchMap["ttl"],
+							FieldMatchType: &p4_v1.FieldMatch_Ternary_{
+								Ternary: &p4_v1.FieldMatch_Ternary{
+									Value: []byte{byte(info.Ttl)},
+									Mask:  []byte{byte(info.TtlMask)},
+								},
+							},
+						}, {
+							FieldId: WbbMatchMap["outer_vlan_id"],
+							FieldMatchType: &p4_v1.FieldMatch_Ternary_{
+								Ternary: &p4_v1.FieldMatch_Ternary{
+									Value: []byte{
+										byte((info.OuterVlanId >> 8) & 0xF),
+										byte(info.OuterVlanId & 0xFF),
+									},
+									Mask: []byte{
+										byte((info.OuterVlanIdMask >> 8) & 0xF),
+										byte(info.OuterVlanIdMask & 0xFF),
+									},
 								},
 							},
 						},
 					},
-				},
-				Action: &p4_v1.TableAction{
-					Type: &p4_v1.TableAction_Action{
-						Action: &p4_v1.Action{
-							ActionId: WbbActionsMap["acl_wbb_ingress_trap"],
+					Action: &p4_v1.TableAction{
+						Type: &p4_v1.TableAction_Action{
+							Action: &p4_v1.Action{
+								ActionId: WbbActionsMap["acl_wbb_ingress_trap"],
+							},
 						},
 					},
 				},
@@ -115,5 +119,15 @@ func AclWbbIngressTableEntryGet(info *AclWbbIngressTableEntryInfo) *p4_v1.Entity
 		},
 	}
 
-	return entity
+	return update
+}
+
+func AclWbbIngressTableEntryGet(infoList []*AclWbbIngressTableEntryInfo) []*p4_v1.Update {
+	var updates []*p4_v1.Update
+
+	for _, info := range infoList {
+		updates = append(updates, aclWbbIngressTableEntryGet(info))
+	}
+
+	return updates
 }

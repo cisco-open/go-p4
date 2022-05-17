@@ -1,0 +1,44 @@
+{
+	"Clients": [
+        	{
+                    "Description": "Client 1",
+                    "ServerIP": "127.0.0.1",
+                    "ServerPort": 57400,
+                    "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
+                    "Sessions": [
+                        {
+                	        "Description": "Session 1",
+                                "DeviceId": 3,
+                                "ElectionIdH": 0,
+                                "ElectionIdL": 1,
+                                "Cookie": 1
+                        },
+                        {
+                	        "Description": "Session 2",
+                                "DeviceId": 3,
+                                "ElectionIdH": 0,
+                                "ElectionIdL": 100,
+                                "Cookie": 2
+                        }
+                    ]
+                },
+                {
+                    "Description": "Client 2",
+                    "ServerIP": "127.0.0.1",
+                    "ServerPort": 57400,
+                    "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
+                    "Sessions": [
+                        {
+                	        "Description": "Session 1",
+                                "DeviceId": 2,
+                                "ElectionIdH": 0,
+                                "ElectionIdL": 1,
+                                "Cookie": 3
+                        }
+                    ]
+                }
+        ],
+        "Globals": {
+        	"Test":	"This is a test"
+        }
+}
