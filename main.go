@@ -30,81 +30,55 @@ func main() {
 	validateArgs()
 	log.Println("Called as:", os.Args)
 
-	// Read params JSON file to configure the setup
-	params, err := utils.ParameterLoad(jsonFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Params: %s", utils.ParameterToString(params))
-	log.Printf("Info: %d", params.Clients[0].Sessions[0].ElectionIdL)
-	log.Fatalf("exit")
+	clientsMap, params := p4rt_client.InitfromJson(jsonFile, serverIP, *serverPort)
 
-	// XXX Re-write the below based on the params
-	// Note, if client does not have a param, get it from flags.*
+	// Grab first Client (from JSON)
+	p4rtClient := clientsMap[params.Clients[0].Name]
+	// Grab first session ID
+	sessionId1Name := params.Clients[0].Sessions[0].Name
+	sessionId1 := p4rtClient.Sessions[sessionId1Name]
 
-	// For now, Setup the connection with the server
-	p4rtClient := p4rt_client.NewP4RTClient(&p4rt_client.P4RTClientParams{
-		Name:       "Client1",
-		ServerIP:   *serverIP,
-		ServerPort: *serverPort,
-	})
+	// XXX Noticed a race condition here between session 1 and session 2
+	// It is a bit random which one comes up first. If session 2 comes up first
+	// then session 1 does not become master at all.
+	// In this case, the sequence number is messed up (expecting 2, but we got 1)
 
-	err = p4rtClient.ServerConnect()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var streamId uint32
-	streamId, err = p4rtClient.StreamChannelCreate()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// XXX The set/get arbitration here may be wrapped in a single function
-	// Note that, the server can send async arb resp messages
-	// So, we can loop on StreamChannelGetLastArbitrationResp() unti
-	// we get the expected result
-
-	err = p4rtClient.StreamChannelSendArbitration(streamId, &p4_v1.StreamMessageRequest{
-		Update: &p4_v1.StreamMessageRequest_Arbitration{
-			Arbitration: &p4_v1.MasterArbitrationUpdate{
-				DeviceId: 3,
-				ElectionId: &p4_v1.Uint128{
-					High: 0,
-					Low:  1,
-				},
-			},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	lastSeqNum, arbMsg, arbErr := p4rtClient.StreamChannelGetLastArbitrationResp(streamId, 1)
+	// Check mastership
+	lastSeqNum, arbMsg, arbErr := p4rtClient.StreamChannelGetLastArbitrationResp(sessionId1, 1)
 	if arbErr != nil {
 		log.Fatal(arbErr)
 	}
 	isMaster := arbMsg.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Master(%v) %d %s", params.Clients[0].Name, sessionId1Name, isMaster, lastSeqNum, arbMsg.String())
 
-	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
+	// Let's see what Client1 session2 has received as last arbitration
+	// Master2 should have preempted
+	sessionId2Name := params.Clients[0].Sessions[1].Name
+	sessionId2 := p4rtClient.Sessions[sessionId2Name]
+	lastSeqNum2, arbMsg2, arbErr2 := p4rtClient.StreamChannelGetLastArbitrationResp(sessionId2, 1)
+	if arbErr2 != nil {
+		log.Fatal(arbErr2)
+	}
+	isMaster2 := arbMsg2.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Master(%v) %d %s", params.Clients[0].Name, sessionId2Name, isMaster2, lastSeqNum2, arbMsg2.String())
 
 	// Load P4Info file
-	p4Info, p4InfoErr := utils.P4InfoLoad(p4InfoFile)
+	p4Info, p4InfoErr := utils.P4InfoLoad(&params.Clients[0].P4InfoFile)
 	if p4InfoErr != nil {
 		log.Fatal(p4InfoErr)
 	}
 
-	err = p4rtClient.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
-		DeviceId: 3,
-		ElectionId: &p4_v1.Uint128{
-			High: 0,
-			Low:  1,
-		},
-		Action: p4_v1.SetForwardingPipelineConfigRequest_VERIFY_AND_COMMIT,
+	// Set Forwarding pipeline
+	// Not associated with any sessions, but we have to use the master's
+	// Note, both arbMsg and arbMsg2 have the master's Election Id
+	err := p4rtClient.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
+		DeviceId:   arbMsg.DeviceId,
+		ElectionId: arbMsg.ElectionId,
+		Action:     p4_v1.SetForwardingPipelineConfigRequest_VERIFY_AND_COMMIT,
 		Config: &p4_v1.ForwardingPipelineConfig{
 			P4Info: &p4Info,
 			Cookie: &p4_v1.ForwardingPipelineConfig_Cookie{
-				Cookie: 15,
+				Cookie: 1,
 			},
 		},
 	})
@@ -112,13 +86,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Write
+	// Write is not associated with any sessions, but we have to use the master's
 	err = p4rtClient.Write(&p4_v1.WriteRequest{
-		DeviceId: 3,
-		ElectionId: &p4_v1.Uint128{
-			High: 0,
-			Low:  1,
-		},
+		DeviceId:   arbMsg2.DeviceId,
+		ElectionId: arbMsg2.ElectionId,
 		Updates: wbb.AclWbbIngressTableEntryGet([]*wbb.AclWbbIngressTableEntryInfo{
 			&wbb.AclWbbIngressTableEntryInfo{
 				Type:          p4_v1.Update_INSERT,
@@ -138,52 +109,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Second session same client
+	// Try removing the current master
+	p4rtClient.StreamChannelDestroy(sessionId2)
 
-	var streamId2 uint32
-	streamId2, err = p4rtClient.StreamChannelCreate()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// XXX The set/get arbitration here may be wrapped in a single function
-	// Note that, the server can send async arb resp messages
-	// So, we can loop on StreamChannelGetLastArbitrationResp() unti
-	// we get the expected result
-
-	err = p4rtClient.StreamChannelSendArbitration(streamId2, &p4_v1.StreamMessageRequest{
-		Update: &p4_v1.StreamMessageRequest_Arbitration{
-			Arbitration: &p4_v1.MasterArbitrationUpdate{
-				DeviceId: 3,
-				ElectionId: &p4_v1.Uint128{
-					High: 0,
-					Low:  100,
-				},
-			},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	lastSeqNum2, arbMsg2, arbErr2 := p4rtClient.StreamChannelGetLastArbitrationResp(streamId2, 1)
-	if arbErr2 != nil {
-		log.Fatal(arbErr2)
-	}
-	isMaster2 := arbMsg2.Status.Code == int32(codes.OK)
-
-	log.Printf("Got Master(%v) %d %s", isMaster2, lastSeqNum2, arbMsg2.String())
-
-	// Master2 should have preempted
-	lastSeqNum, arbMsg, arbErr = p4rtClient.StreamChannelGetLastArbitrationResp(streamId, 2)
+	// Read what Session 1 got - block for Seq# 3
+	lastSeqNum, arbMsg, arbErr = p4rtClient.StreamChannelGetLastArbitrationResp(sessionId1, 2)
 	if arbErr != nil {
 		log.Fatal(arbErr)
 	}
 	isMaster = arbMsg.Status.Code == int32(codes.OK)
-	log.Printf("Got Master(%v) %d %s", isMaster, lastSeqNum, arbMsg.String())
+	log.Printf("'%s' '%s' Got Master(%v) %d %s", params.Clients[0].Name, sessionId1Name, isMaster, lastSeqNum, arbMsg.String())
 
-	// Try removing the master
-	p4rtClient.StreamChannelDestroy(streamId2)
+	// XXX Add packet handling
 
 	// Test Driver
 ForEver:
@@ -195,7 +132,7 @@ ForEver:
 		}
 	}
 
-	p4rtClient.StreamChannelDestroy(streamId)
+	p4rtClient.StreamChannelDestroy(sessionId1)
 
 	p4rtClient.ServerDisconnect()
 }
