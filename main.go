@@ -13,6 +13,7 @@ import (
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	codes "google.golang.org/grpc/codes"
 	"log"
+	"net"
 	"os"
 	"time"
 	"wwwin-github.cisco.com/rehaddad/go-p4/p4info/wbb"
@@ -72,8 +73,8 @@ func main() {
 	// Not associated with any sessions, but we have to use the master's
 	// Note, both arbMsg and arbMsg2 have the master's Election Id
 	err := p4rtClient.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
-		DeviceId:   arbMsg.DeviceId,
-		ElectionId: arbMsg.ElectionId,
+		DeviceId:   arbMsg2.DeviceId,
+		ElectionId: arbMsg2.ElectionId,
 		Action:     p4_v1.SetForwardingPipelineConfigRequest_VERIFY_AND_COMMIT,
 		Config: &p4_v1.ForwardingPipelineConfig{
 			P4Info: &p4Info,
@@ -105,6 +106,54 @@ func main() {
 		}),
 		Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Send L3 packet to ingress
+	err = p4rtClient.StreamChannelSendMsg(
+		sessionId1, &p4_v1.StreamMessageRequest{
+			Update: &p4_v1.StreamMessageRequest_Packet{
+				Packet: &p4_v1.PacketOut{
+					Payload: utils.PacketICMPEchoRequestGet(false,
+						net.HardwareAddr{0xFF, 0xAA, 0xFA, 0xAA, 0xFF, 0xAA},
+						net.HardwareAddr{0xBD, 0xBD, 0xBD, 0xBD, 0xBD, 0xBD},
+						net.IP{10, 0, 0, 1},
+						net.IP{10, 0, 0, 2},
+						64),
+					Metadata: []*p4_v1.PacketMetadata{
+						&p4_v1.PacketMetadata{
+							MetadataId: 2, // "submit_to_ingress"
+							Value:      []byte{0x1},
+						},
+					},
+				},
+			},
+		})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Send L2 packet to egress
+	err = p4rtClient.StreamChannelSendMsg(
+		sessionId1, &p4_v1.StreamMessageRequest{
+			Update: &p4_v1.StreamMessageRequest_Packet{
+				Packet: &p4_v1.PacketOut{
+					Payload: utils.PacketICMPEchoRequestGet(true,
+						net.HardwareAddr{0xFF, 0xAA, 0xFA, 0xAA, 0xFF, 0xAA},
+						net.HardwareAddr{0xBD, 0xBD, 0xBD, 0xBD, 0xBD, 0xBD},
+						net.IP{10, 0, 0, 1},
+						net.IP{10, 0, 0, 2},
+						64),
+					Metadata: []*p4_v1.PacketMetadata{
+						&p4_v1.PacketMetadata{
+							MetadataId: 1,            // "egress_port"
+							Value:      []byte("24"), // Port-id As configured
+						},
+					},
+				},
+			},
+		})
 	if err != nil {
 		log.Fatal(err)
 	}

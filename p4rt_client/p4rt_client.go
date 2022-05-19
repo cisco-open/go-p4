@@ -10,6 +10,7 @@ package p4rt_client
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
@@ -18,6 +19,10 @@ import (
 	"log"
 	"strconv"
 	"sync"
+)
+
+const (
+	P4RT_MAX_PACKET_QUEUE_SIZE = 100
 )
 
 type P4RTSessionParameters struct {
@@ -103,6 +108,11 @@ func NewP4RTClientSession(params *P4RTSessionParameters, streamId uint32,
 	return cSession
 }
 
+type P4RTPacketInfo struct {
+	StreamId uint32
+	Pkt      *p4_v1.PacketIn
+}
+
 // We want the Client to be more or less stateless so that we can do negative testing
 // This would require the test driver to explicitly set every attribute in every message
 type P4RTClient struct {
@@ -114,6 +124,11 @@ type P4RTClient struct {
 	streamId   uint32                        // Global increasing number
 	streams    map[uint32]*P4RTClientSession // We can have multiple streams per client
 	// end client_mu Protection
+
+	pkt_mu   sync.Mutex // Protects the following:
+	pktQSize int
+	pktQ     []*P4RTPacketInfo
+	// end pkt_mu Protection
 
 	Sessions map[string]uint32
 }
@@ -157,6 +172,51 @@ func (p *P4RTClient) ServerDisconnect() {
 		p.connection.Close()
 		p.connection = nil
 	}
+}
+
+// XXX Do we need a callback function to avoid polling?
+// Should this be Global or per device?
+func (p *P4RTClient) queuePacket(pktInfo *P4RTPacketInfo) {
+	p.pkt_mu.Lock()
+	qLen := len(p.pktQ)
+	if qLen >= p.pktQSize {
+		p.pkt_mu.Unlock()
+		log.Printf("'%s' WARNING Queue Full Dropping StreamId(%d) QSize(%d) Pkt(%s)",
+			p, pktInfo.StreamId, qLen, pktInfo.Pkt)
+		return
+	}
+
+	p.pktQ = append(p.pktQ, pktInfo)
+
+	p.pkt_mu.Unlock()
+}
+
+func (p *P4RTClient) GetPacket() *P4RTPacketInfo {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	if len(p.pktQ) == 0 {
+		return nil
+	}
+
+	pktInfo := p.pktQ[0]
+	p.pktQ = p.pktQ[1:]
+
+	return pktInfo
+}
+
+func (p *P4RTClient) SetPacketQSize(size int) {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	p.pktQSize = size
+}
+
+func (p *P4RTClient) GetPacketQSize() int {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	return p.pktQSize
 }
 
 // Return unique handle for this stream
@@ -226,7 +286,10 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTSessionParameters) (uint32,
 
 			case *p4_v1.StreamMessageResponse_Packet:
 				log.Printf("'%s' Received %s\n", session, event.String())
-				// XXX Add to buffered channel
+				p.queuePacket(&P4RTPacketInfo{
+					StreamId: session.streamId,
+					Pkt:      event.GetPacket(),
+				})
 			case *p4_v1.StreamMessageResponse_Digest:
 			case *p4_v1.StreamMessageResponse_IdleTimeoutNotification:
 			case *p4_v1.StreamMessageResponse_Other:
@@ -287,11 +350,21 @@ func (p *P4RTClient) StreamChannelDestroy(streamId uint32) {
 	p.client_mu.Unlock()
 }
 
-func (p *P4RTClient) StreamChannelSendArbitration(streamId uint32, msg *p4_v1.StreamMessageRequest) error {
+func (p *P4RTClient) StreamChannelSendMsg(streamId uint32, msg *p4_v1.StreamMessageRequest) error {
 
 	cSession := p.streamChannelGet(streamId)
 	if cSession == nil {
 		return fmt.Errorf("'%s' StreamId(%d) Not found", p, streamId)
+	}
+
+	log.Printf("'%s' StreamChannelSendMsg: %s\n", p, msg)
+	switch msg.Update.(type) {
+	case *p4_v1.StreamMessageRequest_Packet:
+		pkt := msg.GetPacket()
+		if pkt != nil {
+			log.Printf("'%s' StreamChannelSendMsg: Packet: %s\n", p, hex.EncodeToString(pkt.Payload))
+		}
+	default:
 	}
 
 	err := cSession.stream.Send(msg)
@@ -370,6 +443,7 @@ func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 	}
 
 	// Initialize
+	client.pktQSize = P4RT_MAX_PACKET_QUEUE_SIZE
 	client.streams = make(map[uint32]*P4RTClientSession)
 	client.Sessions = make(map[string]uint32)
 
@@ -417,7 +491,7 @@ func InitfromJson(jsonFile *string, serverIP *string, serverPort int) (map[strin
 			}
 			p4rtClient.Sessions[session.Name] = streamId
 
-			err = p4rtClient.StreamChannelSendArbitration(streamId, &p4_v1.StreamMessageRequest{
+			err = p4rtClient.StreamChannelSendMsg(streamId, &p4_v1.StreamMessageRequest{
 				Update: &p4_v1.StreamMessageRequest_Arbitration{
 					Arbitration: &p4_v1.MasterArbitrationUpdate{
 						DeviceId: session.DeviceId,
