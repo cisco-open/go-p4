@@ -134,30 +134,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Send L2 packet to egress
-	err = p4rtClient.StreamChannelSendMsg(
-		sessionId1, &p4_v1.StreamMessageRequest{
-			Update: &p4_v1.StreamMessageRequest_Packet{
-				Packet: &p4_v1.PacketOut{
-					Payload: utils.PacketICMPEchoRequestGet(true,
-						net.HardwareAddr{0xFF, 0xAA, 0xFA, 0xAA, 0xFF, 0xAA},
-						net.HardwareAddr{0xBD, 0xBD, 0xBD, 0xBD, 0xBD, 0xBD},
-						net.IP{10, 0, 0, 1},
-						net.IP{10, 0, 0, 2},
-						64),
-					Metadata: []*p4_v1.PacketMetadata{
-						&p4_v1.PacketMetadata{
-							MetadataId: 1,            // "egress_port"
-							Value:      []byte("24"), // Port-id As configured
-						},
-					},
-				},
-			},
-		})
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// Try removing the current master
 	p4rtClient.StreamChannelDestroy(sessionId2)
 
@@ -172,16 +148,43 @@ func main() {
 	// XXX Add packet handling
 
 	// Test Driver
-ForEver:
+	//ForEver:
 	for {
 		// XXX do things
 		select {
-		case <-time.After(5 * time.Second):
-			break ForEver
+		case <-time.After(1 * time.Second):
+			//break ForEver
+			// Send L2 packet to egress
+			err = p4rtClient.StreamChannelSendMsg(
+				sessionId1, &p4_v1.StreamMessageRequest{
+					Update: &p4_v1.StreamMessageRequest_Packet{
+						Packet: &p4_v1.PacketOut{
+							Payload: utils.PacketICMPEchoRequestGet(true,
+								net.HardwareAddr{0xFF, 0xAA, 0xFA, 0xAA, 0xFF, 0xAA},
+								net.HardwareAddr{0xBD, 0xBD, 0xBD, 0xBD, 0xBD, 0xBD},
+								net.IP{10, 0, 0, 1},
+								net.IP{10, 0, 0, 2},
+								64),
+							Metadata: []*p4_v1.PacketMetadata{
+								&p4_v1.PacketMetadata{
+									MetadataId: 1,            // "egress_port"
+									Value:      []byte("24"), // Port-id As configured
+								},
+							},
+						},
+					},
+				})
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			log.Printf("Going back to sleep...")
 		}
 	}
 
 	p4rtClient.StreamChannelDestroy(sessionId1)
 
 	p4rtClient.ServerDisconnect()
+
+	// XXX Second device session still up
 }

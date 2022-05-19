@@ -270,6 +270,8 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTSessionParameters) (uint32,
 			}
 
 			if stream_err != nil {
+				// XXX When the server exits, we get an EOF
+				// What should we do with that? Currently we just exit the routine
 				log.Printf("'%s' '%s' Client Recv Error %v\n", p, session, stream_err)
 				break
 			}
