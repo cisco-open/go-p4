@@ -19,13 +19,14 @@ import (
 	"log"
 	"strconv"
 	"sync"
+	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
 )
 
 const (
 	P4RT_MAX_PACKET_QUEUE_SIZE = 100
 )
 
-type P4RTSessionParameters struct {
+type P4RTStreamParameters struct {
 	Name        string
 	DeviceId    uint64
 	ElectionIdH uint64
@@ -37,7 +38,7 @@ type P4RTClientParameters struct {
 	ServerIP   string
 	ServerPort int
 	P4InfoFile string
-	Sessions   []P4RTSessionParameters
+	Streams    []P4RTStreamParameters
 }
 
 type P4RTParameters struct {
@@ -49,7 +50,7 @@ func P4RTParameterLoad(fileName *string) (*P4RTParameters, error) {
 
 	jsonFile, err := ioutil.ReadFile(*fileName)
 	if err != nil {
-		log.Printf("ERROR Could not open file %s", *fileName)
+		utils.LogErrorf("Could not open file %s", *fileName)
 	} else {
 		err = json.Unmarshal(jsonFile, &param)
 	}
@@ -61,11 +62,11 @@ func P4RTParameterToString(params *P4RTParameters) string {
 	return string(data)
 }
 
-type P4RTClientSession struct {
-	Params     P4RTSessionParameters // Make a copy
-	streamId   uint32
-	stream     p4_v1.P4Runtime_StreamChannelClient
-	cancelFunc context.CancelFunc
+type P4RTClientStream struct {
+	Params          P4RTStreamParameters // Make a copy
+	streamRxPktCntr uint64
+	stream          p4_v1.P4Runtime_StreamChannelClient
+	cancelFunc      context.CancelFunc
 
 	stopMu sync.Mutex // Protects the following:
 	stop   bool
@@ -77,40 +78,46 @@ type P4RTClientSession struct {
 	lastRespArbr     *p4_v1.MasterArbitrationUpdate
 }
 
-func (p *P4RTClientSession) String() string {
-	return fmt.Sprintf("%s streamId(%d)", p.Params.Name, p.streamId)
+func (p *P4RTClientStream) String() string {
+	return fmt.Sprintf("Stream(%s)", p.Params.Name)
 }
 
-func (p *P4RTClientSession) ShouldStop() bool {
+func (p *P4RTClientStream) ShouldStop() bool {
 	p.stopMu.Lock()
 	defer p.stopMu.Unlock()
 	return p.stop
 }
 
-func (p *P4RTClientSession) Stop() {
+func (p *P4RTClientStream) Stop() {
 	p.stopMu.Lock()
 	defer p.stopMu.Unlock()
 	p.stop = true
 }
 
-func NewP4RTClientSession(params *P4RTSessionParameters, streamId uint32,
-	stream p4_v1.P4Runtime_StreamChannelClient, cancelFunc context.CancelFunc) *P4RTClientSession {
-	cSession := &P4RTClientSession{
+func NewP4RTClientStream(params *P4RTStreamParameters, stream p4_v1.P4Runtime_StreamChannelClient,
+	cancelFunc context.CancelFunc) *P4RTClientStream {
+
+	cStream := &P4RTClientStream{
 		Params:     *params,
-		streamId:   streamId,
 		stream:     stream,
 		cancelFunc: cancelFunc,
 	}
 
 	// Initialize
-	cSession.lastRespArbrCond = sync.NewCond(&cSession.lastRespArbrMu)
+	cStream.lastRespArbrCond = sync.NewCond(&cStream.lastRespArbrMu)
 
-	return cSession
+	return cStream
 }
 
 type P4RTPacketInfo struct {
-	StreamId uint32
-	Pkt      *p4_v1.PacketIn
+	StreamRxPktCntr uint64
+	Pkt             *p4_v1.PacketIn
+}
+
+type P4RTPacketCounters struct {
+	RxPktCntr       uint64
+	RxPktCntrDrop   uint64
+	RxPktCntrQueued uint64
 }
 
 // We want the Client to be more or less stateless so that we can do negative testing
@@ -121,16 +128,16 @@ type P4RTClient struct {
 	client_mu  sync.Mutex // Protects the following:
 	connection *grpc.ClientConn
 	p4rtClient p4_v1.P4RuntimeClient
-	streamId   uint32                        // Global increasing number
-	streams    map[uint32]*P4RTClientSession // We can have multiple streams per client
+	streams    map[string]*P4RTClientStream // We can have multiple streams per client
 	// end client_mu Protection
 
-	pkt_mu   sync.Mutex // Protects the following:
-	pktQSize int
-	pktQ     []*P4RTPacketInfo
+	// XXX Packets need to be per Stream, as technically each Stream
+	// can be connected to a different device
+	pkt_mu      sync.Mutex // Protects the following:
+	pktCounters P4RTPacketCounters
+	pktQSize    int
+	pktQ        []*P4RTPacketInfo
 	// end pkt_mu Protection
-
-	Sessions map[string]uint32
 }
 
 func (p *P4RTClient) getAddress() string {
@@ -153,7 +160,7 @@ func (p *P4RTClient) ServerConnect() error {
 	log.Printf("'%s' Connecting to Server\n", p)
 	conn, err := grpc.Dial(p.getAddress(), grpc.WithInsecure())
 	if err != nil {
-		log.Printf("ERROR '%s' Connecting to Server: %s", p, err)
+		utils.LogErrorf("'%s' Connecting to Server: %s", p, err)
 		return err
 	}
 	p.connection = conn
@@ -166,7 +173,6 @@ func (p *P4RTClient) ServerConnect() error {
 }
 
 func (p *P4RTClient) ServerDisconnect() {
-
 	if p.connection != nil {
 		log.Printf("'%s' Disconnecting from Server\n", p)
 		p.connection.Close()
@@ -178,17 +184,29 @@ func (p *P4RTClient) ServerDisconnect() {
 // Should this be Global or per device?
 func (p *P4RTClient) queuePacket(pktInfo *P4RTPacketInfo) {
 	p.pkt_mu.Lock()
+	p.pktCounters.RxPktCntr++
 	qLen := len(p.pktQ)
 	if qLen >= p.pktQSize {
+		p.pktCounters.RxPktCntrDrop++
 		p.pkt_mu.Unlock()
-		log.Printf("'%s' WARNING Queue Full Dropping StreamId(%d) QSize(%d) Pkt(%s)",
-			p, pktInfo.StreamId, qLen, pktInfo.Pkt)
+		// XXX Add stream name
+		log.Printf("'%s' WARNING Queue Full Dropping QSize(%d) Pkt(%s)",
+			p, qLen, pktInfo.Pkt)
 		return
 	}
 
 	p.pktQ = append(p.pktQ, pktInfo)
+	p.pktCounters.RxPktCntrQueued++
 
 	p.pkt_mu.Unlock()
+}
+
+func (p *P4RTClient) GetPacketCounters() *P4RTPacketCounters {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	pktCounters := p.pktCounters
+	return &pktCounters
 }
 
 func (p *P4RTClient) GetPacket() *P4RTPacketInfo {
@@ -219,159 +237,160 @@ func (p *P4RTClient) GetPacketQSize() int {
 	return p.pktQSize
 }
 
-// Return unique handle for this stream
-// 0 is not a valid id
-func (p *P4RTClient) StreamChannelCreate(params *P4RTSessionParameters) (uint32, error) {
+func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 	p.client_mu.Lock()
 	if p.connection == nil {
 		p.client_mu.Unlock()
-		return 0, fmt.Errorf("'%s' Client Not connected", p)
+		return fmt.Errorf("'%s' Client Not connected", p)
 	}
-	p.client_mu.Unlock()
+
+	if p.streams == nil {
+		p.client_mu.Unlock()
+		return fmt.Errorf("'%s' P4RTClient Not properly Initialized (nil streams)", p)
+	}
+
+	if _, found := p.streams[params.Name]; found {
+		p.client_mu.Unlock()
+		return fmt.Errorf("'%s' Stream Name (%s) Already Initialized", p, params.Name)
+	}
 
 	// RPC and setup the stream
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	stream, gerr := p.p4rtClient.StreamChannel(ctx)
 	if gerr != nil {
-		log.Printf("ERROR '%s' StreamChannel: %s", p, gerr)
-		return 0, gerr
+		utils.LogErrorf("'%s' StreamChannel: %s", p, gerr)
+		p.client_mu.Unlock()
+		return gerr
 	}
 
-	p.client_mu.Lock()
-	if p.streams == nil {
-		p.client_mu.Unlock()
-		return 0, fmt.Errorf("ERROR '%s' P4RTClient Not properly Initialized (nil streams)", p)
-	}
-	// Get a new id for this stream
-	p.streamId++
-	streamId := p.streamId
-	cSession := NewP4RTClientSession(params, streamId, stream, cancelFunc)
-	// Add Stream to map, indexed by p.streamId
-	p.streams[streamId] = cSession
+	cStream := NewP4RTClientStream(params, stream, cancelFunc)
+	// Add Stream to map, indexed by stream Name
+	p.streams[params.Name] = cStream
 	p.client_mu.Unlock()
 
 	// Make sure the RX routine is happy
 	upChan := make(chan bool)
 
 	// For ever read from stream
-	go func(session *P4RTClientSession) {
-		log.Printf("'%s' '%s' Started\n", p, session)
+	go func(iStream *P4RTClientStream) {
+		log.Printf("'%s' '%s' Started\n", p, iStream)
 		upChan <- true
 
 		for {
 			/*Before we block, we test to stop*/
-			if session.ShouldStop() {
+			if iStream.ShouldStop() {
 				break
 			}
-			event, stream_err := stream.Recv()
+			event, stream_err := iStream.stream.Recv()
 			/*When we wake up, we test to stop*/
-			if session.ShouldStop() {
+			if iStream.ShouldStop() {
 				break
 			}
 
 			if stream_err != nil {
 				// XXX When the server exits, we get an EOF
 				// What should we do with that? Currently we just exit the routine
-				log.Printf("'%s' '%s' Client Recv Error %v\n", p, session, stream_err)
+				log.Printf("'%s' '%s' Client Recv Error %v\n", p, iStream, stream_err)
 				break
 			}
 
 			// XXX Remove unecessary entries
 			switch event.Update.(type) {
 			case *p4_v1.StreamMessageResponse_Arbitration:
-				session.lastRespArbrMu.Lock()
-				session.lastRespArbrSeq++
-				session.lastRespArbr = event.GetArbitration()
-				session.lastRespArbrMu.Unlock()
-				session.lastRespArbrCond.Signal()
-				log.Printf("'%s' '%s' Seq#(%d) Received %s\n", p, session, session.lastRespArbrSeq, event.String())
+				iStream.lastRespArbrMu.Lock()
+				iStream.lastRespArbrSeq++
+				iStream.lastRespArbr = event.GetArbitration()
+				iStream.lastRespArbrMu.Unlock()
+				iStream.lastRespArbrCond.Signal()
+				log.Printf("'%s' '%s' Seq#(%d) Received %s\n", p, iStream, iStream.lastRespArbrSeq, event.String())
 
 			case *p4_v1.StreamMessageResponse_Packet:
-				log.Printf("'%s' Received %s\n", session, event.String())
+				log.Printf("'%s' Received %s\n", iStream, event.String())
+				iStream.streamRxPktCntr++
 				p.queuePacket(&P4RTPacketInfo{
-					StreamId: session.streamId,
-					Pkt:      event.GetPacket(),
+					StreamRxPktCntr: iStream.streamRxPktCntr,
+					Pkt:             event.GetPacket(),
 				})
 			case *p4_v1.StreamMessageResponse_Digest:
 			case *p4_v1.StreamMessageResponse_IdleTimeoutNotification:
 			case *p4_v1.StreamMessageResponse_Other:
 			case *p4_v1.StreamMessageResponse_Error:
 			default:
-				log.Printf("ERROR '%s' '%s' Received %s\n", p, session, event.String())
+				log.Printf("ERROR '%s' '%s' Received %s\n", p, iStream, event.String())
 			}
 		}
 
 		// Cleanup the stream, lock and remove from map
-		log.Printf("'%s' '%s' Exiting - calling to destroy session\n", p, session)
-		p.StreamChannelDestroy(session.streamId)
-		log.Printf("'%s' '%s' Exited\n", p, session)
+		log.Printf("'%s' '%s' Exiting - calling to destroy stream\n", p, iStream)
+		p.StreamChannelDestroy(&iStream.Params.Name)
+		log.Printf("'%s' '%s' Exited\n", p, iStream)
 
-	}(cSession)
+	}(cStream)
 
 	// Wait for the Tx Routine to start
-	log.Printf("'%s' Waiting for '%s' Go Routine\n", p, cSession)
+	log.Printf("'%s' Waiting for '%s' Go Routine\n", p, cStream)
 	<-upChan
-	log.Printf("'%s' Successfully Spawned '%s'\n", p, cSession)
+	log.Printf("'%s' Successfully Spawned '%s'\n", p, cStream)
 
-	return streamId, nil
+	return nil
 }
 
-func (p *P4RTClient) streamChannelGet(streamId uint32) *P4RTClientSession {
+func (p *P4RTClient) streamChannelGet(streamName *string) *P4RTClientStream {
 	p.client_mu.Lock()
 	defer p.client_mu.Unlock()
 
-	if cSession, found := p.streams[streamId]; found {
-		return cSession
+	if cStream, found := p.streams[*streamName]; found {
+		return cStream
 	}
 
 	return nil
 }
 
 // This function can be called from the driver or from the RX routine
-// in case the serve closes the session
+// in case the serve closes the Stream
 // We handle race conditions here (with locks)
-func (p *P4RTClient) StreamChannelDestroy(streamId uint32) {
-	cSession := p.streamChannelGet(streamId)
-	if cSession == nil {
-		log.Printf("'%s' Could not find streamId(%d)\n", p, streamId)
-		return
+func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
+	cStream := p.streamChannelGet(streamName)
+	if cStream == nil {
+		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
 	}
 
-	log.Printf("'%s' Destroying '%s'", p, cSession)
+	log.Printf("'%s' Destroying '%s'", p, cStream)
 	// Make sure the RX Routine is going to stop
-	cSession.Stop()
+	cStream.Stop()
 	// Force the RX Recv() to wake up
 	// (which would force the RX routing to Destroy and exit)
-	cSession.cancelFunc()
+	cStream.cancelFunc()
 
 	// Remove from map
 	p.client_mu.Lock()
-	if _, found := p.streams[streamId]; found {
-		delete(p.streams, streamId)
+	if _, found := p.streams[*streamName]; found {
+		delete(p.streams, *streamName)
 	}
 	p.client_mu.Unlock()
+
+	return nil
 }
 
-func (p *P4RTClient) StreamChannelSendMsg(streamId uint32, msg *p4_v1.StreamMessageRequest) error {
-
-	cSession := p.streamChannelGet(streamId)
-	if cSession == nil {
-		return fmt.Errorf("'%s' StreamId(%d) Not found", p, streamId)
+func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamMessageRequest) error {
+	cStream := p.streamChannelGet(streamName)
+	if cStream == nil {
+		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
 	}
 
-	log.Printf("'%s' StreamChannelSendMsg: %s\n", p, msg)
+	log.Printf("'%s' '%s' StreamChannelSendMsg: %s\n", p, cStream, msg)
 	switch msg.Update.(type) {
 	case *p4_v1.StreamMessageRequest_Packet:
 		pkt := msg.GetPacket()
 		if pkt != nil {
-			log.Printf("'%s' StreamChannelSendMsg: Packet: %s\n", p, hex.EncodeToString(pkt.Payload))
+			log.Printf("'%s' '%s' StreamChannelSendMsg: Packet: %s\n", p, cStream, hex.EncodeToString(pkt.Payload))
 		}
 	default:
 	}
 
-	err := cSession.stream.Send(msg)
+	err := cStream.stream.Send(msg)
 	if err != nil {
-		log.Printf("ERROR '%s' '%s' '%s': '%s'\n", p, cSession, msg, err)
+		utils.LogErrorf("'%s' '%s' '%s': '%s'\n", p, cStream, msg, err)
 		return err
 	}
 
@@ -379,25 +398,25 @@ func (p *P4RTClient) StreamChannelSendMsg(streamId uint32, msg *p4_v1.StreamMess
 }
 
 // Block until AT LEAST minSeqNum is observed
-func (p *P4RTClient) StreamChannelGetLastArbitrationResp(streamId uint32,
+func (p *P4RTClient) StreamChannelGetLastArbitrationResp(streamName *string,
 	minSeqNum uint64) (uint64, *p4_v1.MasterArbitrationUpdate, error) {
 
 	var lastSeqNum uint64
 	var lastRespArbr *p4_v1.MasterArbitrationUpdate
 
-	cSession := p.streamChannelGet(streamId)
-	if cSession == nil {
-		return lastSeqNum, lastRespArbr, fmt.Errorf("'%s' StreamId(%d) Not found", p, streamId)
+	cStream := p.streamChannelGet(streamName)
+	if cStream == nil {
+		return lastSeqNum, lastRespArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
 	}
 
-	cSession.lastRespArbrMu.Lock()
-	for cSession.lastRespArbrSeq < minSeqNum {
-		cSession.lastRespArbrCond.Wait()
+	cStream.lastRespArbrMu.Lock()
+	for cStream.lastRespArbrSeq < minSeqNum {
+		cStream.lastRespArbrCond.Wait()
 
 	}
-	lastSeqNum = cSession.lastRespArbrSeq
-	lastRespArbr = cSession.lastRespArbr
-	cSession.lastRespArbrMu.Unlock()
+	lastSeqNum = cStream.lastRespArbrSeq
+	lastRespArbr = cStream.lastRespArbr
+	cStream.lastRespArbrMu.Unlock()
 
 	return lastSeqNum, lastRespArbr, nil
 }
@@ -413,7 +432,7 @@ func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelin
 	log.Printf("'%s' SetForwardingPipelineConfig: %s\n", p, msg)
 	_, err := p.p4rtClient.SetForwardingPipelineConfig(context.Background(), msg)
 	if err != nil {
-		log.Printf("ERROR '%s' SetForwardingPipelineConfig: %s\n", p, err)
+		utils.LogErrorf("'%s' SetForwardingPipelineConfig: %s\n", p, err)
 	}
 
 	return err
@@ -430,7 +449,7 @@ func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 	log.Printf("(%s) Write: %s\n", p, msg)
 	_, err := p.p4rtClient.Write(context.Background(), msg)
 	if err != nil {
-		log.Printf("ERROR '%s' Write: %s\n", p, err)
+		utils.LogErrorf("'%s' Write: %s\n", p, err)
 	}
 
 	return err
@@ -446,71 +465,7 @@ func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 
 	// Initialize
 	client.pktQSize = P4RT_MAX_PACKET_QUEUE_SIZE
-	client.streams = make(map[uint32]*P4RTClientSession)
-	client.Sessions = make(map[string]uint32)
+	client.streams = make(map[string]*P4RTClientStream)
 
 	return client
-}
-
-func InitfromJson(jsonFile *string, serverIP *string, serverPort int) (map[string]*P4RTClient, *P4RTParameters) {
-	clientsMap := make(map[string]*P4RTClient)
-
-	// Read params JSON file to configure the setup
-	params, err := P4RTParameterLoad(jsonFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Params: %s", P4RTParameterToString(params))
-
-	for _, client := range params.Clients {
-		if _, found := clientsMap[client.Name]; found {
-			log.Fatalf("Client '%s' Already exists", client.Name)
-		}
-
-		if len(client.ServerIP) == 0 {
-			client.ServerIP = *serverIP
-		}
-		if client.ServerPort == 0 {
-			client.ServerPort = serverPort
-		}
-
-		p4rtClient := NewP4RTClient(&client)
-		clientsMap[client.Name] = p4rtClient
-
-		// Connect
-		err = p4rtClient.ServerConnect()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// Establish sessions
-		for _, session := range client.Sessions {
-			var streamId uint32
-
-			streamId, err = p4rtClient.StreamChannelCreate(&session)
-			if err != nil {
-				log.Fatal(err)
-			}
-			p4rtClient.Sessions[session.Name] = streamId
-
-			err = p4rtClient.StreamChannelSendMsg(streamId, &p4_v1.StreamMessageRequest{
-				Update: &p4_v1.StreamMessageRequest_Arbitration{
-					Arbitration: &p4_v1.MasterArbitrationUpdate{
-						DeviceId: session.DeviceId,
-						ElectionId: &p4_v1.Uint128{
-							High: session.ElectionIdH,
-							Low:  session.ElectionIdL,
-						},
-					},
-				},
-			})
-			if err != nil {
-				log.Fatal(err)
-			}
-
-		}
-
-	}
-
-	return clientsMap, params
 }

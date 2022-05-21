@@ -31,37 +31,46 @@ func main() {
 	validateArgs()
 	log.Println("Called as:", os.Args)
 
-	clientsMap, params := p4rt_client.InitfromJson(jsonFile, serverIP, *serverPort)
+	clientMap := p4rt_client.NewP4RTClientMap()
+	params, err := clientMap.InitfromJson(jsonFile, serverIP, *serverPort)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Grab first Client (from JSON)
-	p4rtClient := clientsMap[params.Clients[0].Name]
-	// Grab first session ID
-	sessionId1Name := params.Clients[0].Sessions[0].Name
-	sessionId1 := p4rtClient.Sessions[sessionId1Name]
+	client0Name := params.Clients[0].Name
+	// Grab first stream Name
+	client0Stream0Name := params.Clients[0].Streams[0].Name
+	// Grab second stream Name
+	client0Stream1Name := params.Clients[0].Streams[1].Name
 
-	// XXX Noticed a race condition here between session 1 and session 2
-	// It is a bit random which one comes up first. If session 2 comes up first
-	// then session 1 does not become master at all.
+	// Grab first client
+	client0, cErr0 := clientMap.ClientGet(&client0Name)
+	if cErr0 != nil {
+		log.Fatal(cErr0)
+	}
+
+	// XXX Noticed a race condition here between stream 1 and stream 2
+	// It is a bit random which one comes up first. If stream 2 comes up first
+	// then stream 1 does not become primary at all.
 	// In this case, the sequence number is messed up (expecting 2, but we got 1)
 
-	// Check mastership
-	lastSeqNum, arbMsg, arbErr := p4rtClient.StreamChannelGetLastArbitrationResp(sessionId1, 1)
-	if arbErr != nil {
-		log.Fatal(arbErr)
+	// Check primary state
+	lastSeqNum0, arbMsg0, arbErr0 := client0.StreamChannelGetLastArbitrationResp(&client0Stream0Name, 1)
+	if arbErr0 != nil {
+		log.Fatal(arbErr0)
 	}
-	isMaster := arbMsg.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Master(%v) %d %s", params.Clients[0].Name, sessionId1Name, isMaster, lastSeqNum, arbMsg.String())
+	isPrimary0 := arbMsg0.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Primary(%v) %d %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.String())
 
-	// Let's see what Client1 session2 has received as last arbitration
-	// Master2 should have preempted
-	sessionId2Name := params.Clients[0].Sessions[1].Name
-	sessionId2 := p4rtClient.Sessions[sessionId2Name]
-	lastSeqNum2, arbMsg2, arbErr2 := p4rtClient.StreamChannelGetLastArbitrationResp(sessionId2, 1)
-	if arbErr2 != nil {
-		log.Fatal(arbErr2)
+	// Let's see what Client0 stream1 has received as last arbitration
+	// Stream1 should have preempted
+	lastSeqNum1, arbMsg1, arbErr1 := client0.StreamChannelGetLastArbitrationResp(&client0Stream1Name, 1)
+	if arbErr1 != nil {
+		log.Fatal(arbErr1)
 	}
-	isMaster2 := arbMsg2.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Master(%v) %d %s", params.Clients[0].Name, sessionId2Name, isMaster2, lastSeqNum2, arbMsg2.String())
+	isPrimary1 := arbMsg1.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Primary(%v) %d %s", client0Name, client0Stream1Name, isPrimary1, lastSeqNum1, arbMsg1.String())
 
 	// Load P4Info file
 	p4Info, p4InfoErr := utils.P4InfoLoad(&params.Clients[0].P4InfoFile)
@@ -70,11 +79,11 @@ func main() {
 	}
 
 	// Set Forwarding pipeline
-	// Not associated with any sessions, but we have to use the master's
-	// Note, both arbMsg and arbMsg2 have the master's Election Id
-	err := p4rtClient.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
-		DeviceId:   arbMsg2.DeviceId,
-		ElectionId: arbMsg2.ElectionId,
+	// Not associated with any streams, but we have to use the primary's
+	// Note, both arbMsg and arbMsg2 have the primary's Election Id
+	err = client0.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
+		DeviceId:   arbMsg1.DeviceId,
+		ElectionId: arbMsg1.ElectionId,
 		Action:     p4_v1.SetForwardingPipelineConfigRequest_VERIFY_AND_COMMIT,
 		Config: &p4_v1.ForwardingPipelineConfig{
 			P4Info: &p4Info,
@@ -87,10 +96,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Write is not associated with any sessions, but we have to use the master's
-	err = p4rtClient.Write(&p4_v1.WriteRequest{
-		DeviceId:   arbMsg2.DeviceId,
-		ElectionId: arbMsg2.ElectionId,
+	// Write is not associated with any streams, but we have to use the primary's
+	err = client0.Write(&p4_v1.WriteRequest{
+		DeviceId:   arbMsg1.DeviceId,
+		ElectionId: arbMsg1.ElectionId,
 		Updates: wbb.AclWbbIngressTableEntryGet([]*wbb.AclWbbIngressTableEntryInfo{
 			&wbb.AclWbbIngressTableEntryInfo{
 				Type:          p4_v1.Update_INSERT,
@@ -110,9 +119,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Send L3 packet to ingress
-	err = p4rtClient.StreamChannelSendMsg(
-		sessionId1, &p4_v1.StreamMessageRequest{
+	// Send L3 packet to ingress (on Primary channel)
+	err = client0.StreamChannelSendMsg(
+		&client0Stream1Name, &p4_v1.StreamMessageRequest{
 			Update: &p4_v1.StreamMessageRequest_Packet{
 				Packet: &p4_v1.PacketOut{
 					Payload: utils.PacketICMPEchoRequestGet(false,
@@ -134,20 +143,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Try removing the current master
-	p4rtClient.StreamChannelDestroy(sessionId2)
+	// Try removing the current Primary
+	client0.StreamChannelDestroy(&client0Stream1Name)
 
-	// Read what Session 1 got - block for Seq# 3
-	lastSeqNum, arbMsg, arbErr = p4rtClient.StreamChannelGetLastArbitrationResp(sessionId1, 2)
-	if arbErr != nil {
-		log.Fatal(arbErr)
+	// Read what Stream 1 got - block for Seq# 3
+	lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetLastArbitrationResp(&client0Stream0Name, 2)
+	if arbErr0 != nil {
+		log.Fatal(arbErr0)
 	}
-	isMaster = arbMsg.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Master(%v) %d %s", params.Clients[0].Name, sessionId1Name, isMaster, lastSeqNum, arbMsg.String())
+	isPrimary0 = arbMsg0.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Primary(%v) %d %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.String())
 
-	// XXX Add packet handling
+	// XXX Add packet Get handling
 
-	// Test Driver
 	//ForEver:
 	for {
 		// XXX do things
@@ -155,8 +163,8 @@ func main() {
 		case <-time.After(1 * time.Second):
 			//break ForEver
 			// Send L2 packet to egress
-			err = p4rtClient.StreamChannelSendMsg(
-				sessionId1, &p4_v1.StreamMessageRequest{
+			err = client0.StreamChannelSendMsg(
+				&client0Stream0Name, &p4_v1.StreamMessageRequest{
 					Update: &p4_v1.StreamMessageRequest_Packet{
 						Packet: &p4_v1.PacketOut{
 							Payload: utils.PacketICMPEchoRequestGet(true,
@@ -182,9 +190,9 @@ func main() {
 		}
 	}
 
-	p4rtClient.StreamChannelDestroy(sessionId1)
+	client0.StreamChannelDestroy(&client0Stream0Name)
 
-	p4rtClient.ServerDisconnect()
+	client0.ServerDisconnect()
 
-	// XXX Second device session still up
+	// XXX Second device stream still up
 }

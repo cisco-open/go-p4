@@ -5,15 +5,15 @@
                     "ServerIP": "127.0.0.1",
                     "ServerPort": 57400,
                     "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
-                    "Sessions": [
+                    "Streams": [
                         {
-                                "Name": "Session 1",
+                                "Name": "Stream 1",
                                 "DeviceId": 3,
                                 "ElectionIdH": 0,
                                 "ElectionIdL": 1
                         },
                         {
-                                "Name": "Session 2",
+                                "Name": "Stream 2",
                                 "DeviceId": 3,
                                 "ElectionIdH": 0,
                                 "ElectionIdL": 2
@@ -25,9 +25,9 @@
                     "ServerIP": "127.0.0.1",
                     "ServerPort": 57400,
                     "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
-                    "Sessions": [
+                    "Streams": [
                         {
-                                "Name": "Session 1",
+                                "Name": "Stream 1",
                                 "DeviceId": 2,
                                 "ElectionIdH": 0,
                                 "ElectionIdL": 1

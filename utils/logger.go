@@ -32,3 +32,11 @@ func UtilsInitLogger(outputDir string) {
 	//log.SetPrefix("")
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }
+
+func LogError(err string) {
+	log.Print("ERROR " + err)
+}
+
+func LogErrorf(format string, args ...interface{}) {
+	log.Printf("ERROR "+format, args...)
+}
