@@ -156,12 +156,17 @@ func main() {
 
 	// XXX Add packet Get handling
 
-	//ForEver:
+	counter := 0
+ForEver:
 	for {
 		// XXX do things
 		select {
-		case <-time.After(1 * time.Second):
-			//break ForEver
+		case <-time.After(1 * time.Microsecond):
+			if counter > 100000 {
+				break ForEver
+			}
+			counter++
+
 			// Send L2 packet to egress
 			err = client0.StreamChannelSendMsg(
 				&client0Stream0Name, &p4_v1.StreamMessageRequest{
