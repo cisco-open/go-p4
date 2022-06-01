@@ -85,6 +85,12 @@ func main() {
 		log.Fatal(p4InfoErr)
 	}
 
+	// Get Capbilities (for now, we just log it)
+	_, err = client0.Capabilities(&p4_v1.CapabilitiesRequest{})
+	if err != nil {
+		log.Printf("Capabilities err: %s", err)
+	}
+
 	// Set Forwarding pipeline
 	// Not associated with any streams, but we have to use the primary's
 	// Note, both arbMsg and arbMsg2 have the primary's Election Id

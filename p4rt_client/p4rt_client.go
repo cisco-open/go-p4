@@ -550,6 +550,25 @@ func (p *P4RTClient) GetForwardingPipelineConfig(msg *p4_v1.GetForwardingPipelin
 	return resp, err
 }
 
+func (p *P4RTClient) Capabilities(msg *p4_v1.CapabilitiesRequest) (*p4_v1.CapabilitiesResponse, error) {
+	p.client_mu.Lock()
+	if p.connection == nil {
+		p.client_mu.Unlock()
+		return nil, fmt.Errorf("'%s' Client Not connected", p)
+	}
+	p.client_mu.Unlock()
+
+	log.Printf("'%s' Capabilities: %s\n", p, msg)
+	resp, err := p.p4rtClient.Capabilities(context.Background(), msg)
+	if err != nil {
+		utils.LogErrorf("'%s' Capabilities: %s\n", p, err)
+	} else {
+		log.Printf("'%s' Capabilities: %s\n", p, resp)
+	}
+
+	return resp, err
+}
+
 func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 	p.client_mu.Lock()
 	if p.connection == nil {
