@@ -531,6 +531,25 @@ func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelin
 	return err
 }
 
+func (p *P4RTClient) GetForwardingPipelineConfig(msg *p4_v1.GetForwardingPipelineConfigRequest) (*p4_v1.GetForwardingPipelineConfigResponse, error) {
+	p.client_mu.Lock()
+	if p.connection == nil {
+		p.client_mu.Unlock()
+		return nil, fmt.Errorf("'%s' Client Not connected", p)
+	}
+	p.client_mu.Unlock()
+
+	log.Printf("'%s' GetForwardingPipelineConfig: %s\n", p, msg)
+	resp, err := p.p4rtClient.GetForwardingPipelineConfig(context.Background(), msg)
+	if err != nil {
+		utils.LogErrorf("'%s' GetForwardingPipelineConfig: %s\n", p, err)
+	} else {
+		log.Printf("'%s' GetForwardingPipelineConfigResponse: %s\n", p, resp)
+	}
+
+	return resp, err
+}
+
 func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 	p.client_mu.Lock()
 	if p.connection == nil {

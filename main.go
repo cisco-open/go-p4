@@ -95,9 +95,18 @@ func main() {
 		Config: &p4_v1.ForwardingPipelineConfig{
 			P4Info: &p4Info,
 			Cookie: &p4_v1.ForwardingPipelineConfig_Cookie{
-				Cookie: 1,
+				Cookie: 159,
 			},
 		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Get Forwarding pipeline (for now, we just log it)
+	_, err = client0.GetForwardingPipelineConfig(&p4_v1.GetForwardingPipelineConfigRequest{
+		DeviceId:     arbMsg1.Arb.DeviceId,
+		ResponseType: p4_v1.GetForwardingPipelineConfigRequest_ALL,
 	})
 	if err != nil {
 		log.Fatal(err)
