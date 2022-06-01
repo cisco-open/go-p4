@@ -141,6 +141,28 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Read ALL and log
+	rStream, rErr := client0.Read(&p4_v1.ReadRequest{
+		DeviceId: arbMsg1.Arb.DeviceId,
+		Entities: []*p4_v1.Entity{
+			&p4_v1.Entity{
+				Entity: &p4_v1.Entity_TableEntry{},
+			},
+		},
+	})
+	if rErr != nil {
+		log.Fatal(rErr)
+	}
+	for {
+		readResp, respErr := rStream.Recv()
+		if respErr != nil {
+			log.Printf("Read Response Err: %s", respErr)
+			break
+		} else {
+			log.Printf("Read Response: %s", readResp)
+		}
+	}
+
 	// Send L3 packet to ingress (on Primary channel)
 	err = client0.StreamChannelSendMsg(
 		&client0Stream1Name, &p4_v1.StreamMessageRequest{

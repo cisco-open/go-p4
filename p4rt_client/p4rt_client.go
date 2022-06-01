@@ -586,6 +586,23 @@ func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 	return err
 }
 
+func (p *P4RTClient) Read(msg *p4_v1.ReadRequest) (p4_v1.P4Runtime_ReadClient, error) {
+	p.client_mu.Lock()
+	if p.connection == nil {
+		p.client_mu.Unlock()
+		return nil, fmt.Errorf("'%s' Client Not connected", p)
+	}
+	p.client_mu.Unlock()
+
+	log.Printf("(%s) Read: %s\n", p, msg)
+	stream, err := p.p4rtClient.Read(context.Background(), msg)
+	if err != nil {
+		utils.LogErrorf("'%s' Read: %s\n", p, err)
+	}
+
+	return stream, err
+}
+
 //
 // Creates and Initializes a P4RT client
 //
