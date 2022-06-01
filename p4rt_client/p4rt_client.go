@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	P4RT_MAX_PACKET_QUEUE_SIZE = 100
+	P4RT_MAX_ARBITRATION_QUEUE_SIZE = 100
+	P4RT_MAX_PACKET_QUEUE_SIZE      = 100
 )
 
 type P4RTStreamParameters struct {
@@ -62,24 +63,54 @@ func P4RTParameterToString(params *P4RTParameters) string {
 	return string(data)
 }
 
+type P4RTArbInfo struct {
+	SeqNum uint64
+	Arb    *p4_v1.MasterArbitrationUpdate
+}
+
+type P4RTArbCounters struct {
+	RxArbCntr       uint64
+	RxArbCntrDrop   uint64
+	RxArbCntrQueued uint64
+}
+
+type P4RTPacketInfo struct {
+	SeqNum uint64
+	Pkt    *p4_v1.PacketIn
+}
+
+type P4RTPacketCounters struct {
+	RxPktCntr       uint64
+	RxPktCntrDrop   uint64
+	RxPktCntrQueued uint64
+}
+
 type P4RTClientStream struct {
-	Params          P4RTStreamParameters // Make a copy
-	streamRxPktCntr uint64
-	stream          p4_v1.P4Runtime_StreamChannelClient
-	cancelFunc      context.CancelFunc
+	Params     P4RTStreamParameters // Make a copy
+	stream     p4_v1.P4Runtime_StreamChannelClient
+	cancelFunc context.CancelFunc
 
 	stopMu sync.Mutex // Protects the following:
 	stop   bool
 	// end stopMu Protection
 
-	lastRespArbrMu   sync.Mutex
-	lastRespArbrCond *sync.Cond
-	lastRespArbrSeq  uint64
-	lastRespArbr     *p4_v1.MasterArbitrationUpdate
+	arb_mu      sync.Mutex // Protects the following:
+	arbCond     *sync.Cond
+	arbCounters P4RTArbCounters
+	arbQSize    int
+	arbQ        []*P4RTArbInfo
+	// end arb_mu Protection
+
+	pkt_mu      sync.Mutex // Protects the following:
+	pktCond     *sync.Cond
+	pktCounters P4RTPacketCounters
+	pktQSize    int
+	pktQ        []*P4RTPacketInfo
+	// end pkt_mu Protection
 }
 
 func (p *P4RTClientStream) String() string {
-	return fmt.Sprintf("Stream(%s)", p.Params.Name)
+	return fmt.Sprintf("Device(%d) Stream(%s)", p.Params.DeviceId, p.Params.Name)
 }
 
 func (p *P4RTClientStream) ShouldStop() bool {
@@ -94,6 +125,136 @@ func (p *P4RTClientStream) Stop() {
 	p.stop = true
 }
 
+// XXX Do we need a callback function to avoid polling?
+// Should this be Global or per device?
+func (p *P4RTClientStream) QueueArbt(arbInfo *P4RTArbInfo) {
+	p.arb_mu.Lock()
+	p.arbCounters.RxArbCntr++
+	arbInfo.SeqNum = p.arbCounters.RxArbCntr
+	qLen := len(p.arbQ)
+	if qLen >= p.arbQSize {
+		p.arbCounters.RxArbCntrDrop++
+		p.arb_mu.Unlock()
+		log.Printf("'%s' WARNING Queue Full Dropping QSize(%d) Arb(%s)",
+			p, qLen, arbInfo.Arb)
+		return
+	}
+
+	p.arbQ = append(p.arbQ, arbInfo)
+	p.arbCounters.RxArbCntrQueued++
+
+	p.arb_mu.Unlock()
+
+	p.arbCond.Signal()
+}
+
+func (p *P4RTClientStream) GetArbCounters() *P4RTArbCounters {
+	p.arb_mu.Lock()
+	defer p.arb_mu.Unlock()
+
+	arbCounters := p.arbCounters
+	return &arbCounters
+}
+
+func (p *P4RTClientStream) GetArbitration(minSeqNum uint64) (uint64, *P4RTArbInfo) {
+	p.arb_mu.Lock()
+	defer p.arb_mu.Unlock()
+
+	for p.arbCounters.RxArbCntr < minSeqNum {
+		log.Printf("'%s' Waiting on Arbitration message (%d/%d)\n",
+			p, p.arbCounters.RxArbCntr, minSeqNum)
+		p.arbCond.Wait()
+	}
+
+	if len(p.arbQ) == 0 {
+		return p.arbCounters.RxArbCntr, nil
+	}
+
+	arbInfo := p.arbQ[0]
+	p.arbQ = p.arbQ[1:]
+
+	return p.arbCounters.RxArbCntr, arbInfo
+}
+
+func (p *P4RTClientStream) SetArbQSize(size int) {
+	p.arb_mu.Lock()
+	defer p.arb_mu.Unlock()
+
+	p.arbQSize = size
+}
+
+func (p *P4RTClientStream) GetArbQSize() int {
+	p.arb_mu.Lock()
+	defer p.arb_mu.Unlock()
+
+	return p.arbQSize
+}
+
+// XXX Do we need a callback function to avoid polling?
+// Should this be Global or per device?
+func (p *P4RTClientStream) QueuePacket(pktInfo *P4RTPacketInfo) {
+	p.pkt_mu.Lock()
+	p.pktCounters.RxPktCntr++
+	pktInfo.SeqNum = p.pktCounters.RxPktCntr
+	qLen := len(p.pktQ)
+	if qLen >= p.pktQSize {
+		p.pktCounters.RxPktCntrDrop++
+		p.pkt_mu.Unlock()
+		log.Printf("'%s' WARNING Queue Full Dropping QSize(%d) Pkt(%s)",
+			p, qLen, pktInfo.Pkt)
+		return
+	}
+
+	p.pktQ = append(p.pktQ, pktInfo)
+	p.pktCounters.RxPktCntrQueued++
+
+	p.pkt_mu.Unlock()
+
+	p.pktCond.Signal()
+}
+
+func (p *P4RTClientStream) GetPacketCounters() *P4RTPacketCounters {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	pktCounters := p.pktCounters
+	return &pktCounters
+}
+
+func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo) {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	for p.pktCounters.RxPktCntr < minSeqNum {
+		log.Printf("'%s' Waiting on Packet (%d/%d)\n",
+			p, p.pktCounters.RxPktCntr, minSeqNum)
+		p.pktCond.Wait()
+	}
+
+	if len(p.pktQ) == 0 {
+		return p.pktCounters.RxPktCntr, nil
+	}
+
+	pktInfo := p.pktQ[0]
+	p.pktQ = p.pktQ[1:]
+
+	return p.pktCounters.RxPktCntr, pktInfo
+}
+
+func (p *P4RTClientStream) SetPacketQSize(size int) {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	p.pktQSize = size
+}
+
+func (p *P4RTClientStream) GetPacketQSize() int {
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+
+	return p.pktQSize
+}
+
 func NewP4RTClientStream(params *P4RTStreamParameters, stream p4_v1.P4Runtime_StreamChannelClient,
 	cancelFunc context.CancelFunc) *P4RTClientStream {
 
@@ -101,23 +262,15 @@ func NewP4RTClientStream(params *P4RTStreamParameters, stream p4_v1.P4Runtime_St
 		Params:     *params,
 		stream:     stream,
 		cancelFunc: cancelFunc,
+		arbQSize:   P4RT_MAX_ARBITRATION_QUEUE_SIZE,
+		pktQSize:   P4RT_MAX_PACKET_QUEUE_SIZE,
 	}
 
 	// Initialize
-	cStream.lastRespArbrCond = sync.NewCond(&cStream.lastRespArbrMu)
+	cStream.arbCond = sync.NewCond(&cStream.arb_mu)
+	cStream.pktCond = sync.NewCond(&cStream.pkt_mu)
 
 	return cStream
-}
-
-type P4RTPacketInfo struct {
-	StreamRxPktCntr uint64
-	Pkt             *p4_v1.PacketIn
-}
-
-type P4RTPacketCounters struct {
-	RxPktCntr       uint64
-	RxPktCntrDrop   uint64
-	RxPktCntrQueued uint64
 }
 
 // We want the Client to be more or less stateless so that we can do negative testing
@@ -130,14 +283,6 @@ type P4RTClient struct {
 	p4rtClient p4_v1.P4RuntimeClient
 	streams    map[string]*P4RTClientStream // We can have multiple streams per client
 	// end client_mu Protection
-
-	// XXX Packets need to be per Stream, as technically each Stream
-	// can be connected to a different device
-	pkt_mu      sync.Mutex // Protects the following:
-	pktCounters P4RTPacketCounters
-	pktQSize    int
-	pktQ        []*P4RTPacketInfo
-	// end pkt_mu Protection
 }
 
 func (p *P4RTClient) getAddress() string {
@@ -178,63 +323,6 @@ func (p *P4RTClient) ServerDisconnect() {
 		p.connection.Close()
 		p.connection = nil
 	}
-}
-
-// XXX Do we need a callback function to avoid polling?
-// Should this be Global or per device?
-func (p *P4RTClient) queuePacket(pktInfo *P4RTPacketInfo) {
-	p.pkt_mu.Lock()
-	p.pktCounters.RxPktCntr++
-	qLen := len(p.pktQ)
-	if qLen >= p.pktQSize {
-		p.pktCounters.RxPktCntrDrop++
-		p.pkt_mu.Unlock()
-		// XXX Add stream name
-		log.Printf("'%s' WARNING Queue Full Dropping QSize(%d) Pkt(%s)",
-			p, qLen, pktInfo.Pkt)
-		return
-	}
-
-	p.pktQ = append(p.pktQ, pktInfo)
-	p.pktCounters.RxPktCntrQueued++
-
-	p.pkt_mu.Unlock()
-}
-
-func (p *P4RTClient) GetPacketCounters() *P4RTPacketCounters {
-	p.pkt_mu.Lock()
-	defer p.pkt_mu.Unlock()
-
-	pktCounters := p.pktCounters
-	return &pktCounters
-}
-
-func (p *P4RTClient) GetPacket() *P4RTPacketInfo {
-	p.pkt_mu.Lock()
-	defer p.pkt_mu.Unlock()
-
-	if len(p.pktQ) == 0 {
-		return nil
-	}
-
-	pktInfo := p.pktQ[0]
-	p.pktQ = p.pktQ[1:]
-
-	return pktInfo
-}
-
-func (p *P4RTClient) SetPacketQSize(size int) {
-	p.pkt_mu.Lock()
-	defer p.pkt_mu.Unlock()
-
-	p.pktQSize = size
-}
-
-func (p *P4RTClient) GetPacketQSize() int {
-	p.pkt_mu.Lock()
-	defer p.pkt_mu.Unlock()
-
-	return p.pktQSize
 }
 
 func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
@@ -294,22 +382,16 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 				break
 			}
 
-			// XXX Remove unecessary entries
+			log.Printf("'%s' '%s' Received %s\n", p, iStream, event.String())
+
 			switch event.Update.(type) {
 			case *p4_v1.StreamMessageResponse_Arbitration:
-				iStream.lastRespArbrMu.Lock()
-				iStream.lastRespArbrSeq++
-				iStream.lastRespArbr = event.GetArbitration()
-				iStream.lastRespArbrMu.Unlock()
-				iStream.lastRespArbrCond.Signal()
-				log.Printf("'%s' '%s' Seq#(%d) Received %s\n", p, iStream, iStream.lastRespArbrSeq, event.String())
-
+				iStream.QueueArbt(&P4RTArbInfo{
+					Arb: event.GetArbitration(),
+				})
 			case *p4_v1.StreamMessageResponse_Packet:
-				log.Printf("'%s' Received %s\n", iStream, event.String())
-				iStream.streamRxPktCntr++
-				p.queuePacket(&P4RTPacketInfo{
-					StreamRxPktCntr: iStream.streamRxPktCntr,
-					Pkt:             event.GetPacket(),
+				iStream.QueuePacket(&P4RTPacketInfo{
+					Pkt: event.GetPacket(),
 				})
 			case *p4_v1.StreamMessageResponse_Digest:
 			case *p4_v1.StreamMessageResponse_IdleTimeoutNotification:
@@ -398,27 +480,38 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 }
 
 // Block until AT LEAST minSeqNum is observed
-func (p *P4RTClient) StreamChannelGetLastArbitrationResp(streamName *string,
-	minSeqNum uint64) (uint64, *p4_v1.MasterArbitrationUpdate, error) {
+// Returns the max arbitration sequence number observed and
+// the "next" Arbitration from the FIFO queue (could be nil)
+func (p *P4RTClient) StreamChannelGetArbitrationResp(streamName *string,
+	minSeqNum uint64) (uint64, *P4RTArbInfo, error) {
 
-	var lastSeqNum uint64
-	var lastRespArbr *p4_v1.MasterArbitrationUpdate
+	var seqNum uint64
+	var respArbr *P4RTArbInfo
 
 	cStream := p.streamChannelGet(streamName)
 	if cStream == nil {
-		return lastSeqNum, lastRespArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
+		return seqNum, respArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
 	}
 
-	cStream.lastRespArbrMu.Lock()
-	for cStream.lastRespArbrSeq < minSeqNum {
-		cStream.lastRespArbrCond.Wait()
+	seqNum, respArbr = cStream.GetArbitration(minSeqNum)
 
+	return seqNum, respArbr, nil
+}
+
+func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
+	minSeqNum uint64) (uint64, *P4RTPacketInfo, error) {
+
+	var seqNum uint64
+	var pktInfo *P4RTPacketInfo
+
+	cStream := p.streamChannelGet(streamName)
+	if cStream == nil {
+		return seqNum, pktInfo, fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
 	}
-	lastSeqNum = cStream.lastRespArbrSeq
-	lastRespArbr = cStream.lastRespArbr
-	cStream.lastRespArbrMu.Unlock()
 
-	return lastSeqNum, lastRespArbr, nil
+	seqNum, pktInfo = cStream.GetPacket(minSeqNum)
+
+	return seqNum, pktInfo, nil
 }
 
 func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelineConfigRequest) error {
@@ -464,7 +557,6 @@ func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 	}
 
 	// Initialize
-	client.pktQSize = P4RT_MAX_PACKET_QUEUE_SIZE
 	client.streams = make(map[string]*P4RTClientStream)
 
 	return client

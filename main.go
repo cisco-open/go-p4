@@ -37,7 +37,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Grab first Client (from JSON)
+	// Grab first Client Name (from JSON)
 	client0Name := params.Clients[0].Name
 	// Grab first stream Name
 	client0Stream0Name := params.Clients[0].Streams[0].Name
@@ -56,21 +56,28 @@ func main() {
 	// In this case, the sequence number is messed up (expecting 2, but we got 1)
 
 	// Check primary state
-	lastSeqNum0, arbMsg0, arbErr0 := client0.StreamChannelGetLastArbitrationResp(&client0Stream0Name, 1)
+	log.Printf("'%s' Checking Primary state\n", client0)
+	lastSeqNum0, arbMsg0, arbErr0 := client0.StreamChannelGetArbitrationResp(&client0Stream0Name, 1)
 	if arbErr0 != nil {
 		log.Fatal(arbErr0)
 	}
-	isPrimary0 := arbMsg0.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Primary(%v) %d %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.String())
+	if arbMsg0 == nil {
+		log.Fatalf("'%s' nil Arbitration", client0Stream0Name)
+	}
+	isPrimary0 := arbMsg0.Arb.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
 
 	// Let's see what Client0 stream1 has received as last arbitration
 	// Stream1 should have preempted
-	lastSeqNum1, arbMsg1, arbErr1 := client0.StreamChannelGetLastArbitrationResp(&client0Stream1Name, 1)
+	lastSeqNum1, arbMsg1, arbErr1 := client0.StreamChannelGetArbitrationResp(&client0Stream1Name, 1)
 	if arbErr1 != nil {
 		log.Fatal(arbErr1)
 	}
-	isPrimary1 := arbMsg1.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Primary(%v) %d %s", client0Name, client0Stream1Name, isPrimary1, lastSeqNum1, arbMsg1.String())
+	if arbMsg1 == nil {
+		log.Fatalf("'%s' nil Arbitration", client0Stream1Name)
+	}
+	isPrimary1 := arbMsg1.Arb.Status.Code == int32(codes.OK)
+	log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream1Name, isPrimary1, lastSeqNum1, arbMsg1.Arb.String())
 
 	// Load P4Info file
 	p4Info, p4InfoErr := utils.P4InfoLoad(&params.Clients[0].P4InfoFile)
@@ -82,8 +89,8 @@ func main() {
 	// Not associated with any streams, but we have to use the primary's
 	// Note, both arbMsg and arbMsg2 have the primary's Election Id
 	err = client0.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
-		DeviceId:   arbMsg1.DeviceId,
-		ElectionId: arbMsg1.ElectionId,
+		DeviceId:   arbMsg1.Arb.DeviceId,
+		ElectionId: arbMsg1.Arb.ElectionId,
 		Action:     p4_v1.SetForwardingPipelineConfigRequest_VERIFY_AND_COMMIT,
 		Config: &p4_v1.ForwardingPipelineConfig{
 			P4Info: &p4Info,
@@ -98,8 +105,8 @@ func main() {
 
 	// Write is not associated with any streams, but we have to use the primary's
 	err = client0.Write(&p4_v1.WriteRequest{
-		DeviceId:   arbMsg1.DeviceId,
-		ElectionId: arbMsg1.ElectionId,
+		DeviceId:   arbMsg1.Arb.DeviceId,
+		ElectionId: arbMsg1.Arb.ElectionId,
 		Updates: wbb.AclWbbIngressTableEntryGet([]*wbb.AclWbbIngressTableEntryInfo{
 			&wbb.AclWbbIngressTableEntryInfo{
 				Type:          p4_v1.Update_INSERT,
@@ -143,16 +150,35 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Try removing the current Primary
-	client0.StreamChannelDestroy(&client0Stream1Name)
-
-	// Read what Stream 1 got - block for Seq# 3
-	lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetLastArbitrationResp(&client0Stream0Name, 2)
+	// Get the last sequence number received so far
+	lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetArbitrationResp(&client0Stream0Name, 0)
 	if arbErr0 != nil {
 		log.Fatal(arbErr0)
 	}
-	isPrimary0 = arbMsg0.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Primary(%v) %d %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.String())
+	if arbMsg0 != nil {
+		isPrimary0 = arbMsg0.Arb.Status.Code == int32(codes.OK)
+		log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
+	}
+	log.Printf("'%s' '%s' Got Last SeqNum(%d)", client0Name, client0Stream0Name, lastSeqNum0)
+
+	// Try removing the current Primary
+	client0.StreamChannelDestroy(&client0Stream1Name)
+
+	// Read what Stream 1 got AFTER the primary exits and Deplete the queue
+	lastSeqNum0 = lastSeqNum0 + 1
+	for {
+		lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetArbitrationResp(&client0Stream0Name, lastSeqNum0)
+		if arbErr0 != nil {
+			log.Fatal(arbErr0)
+		}
+		if arbMsg0 != nil {
+			isPrimary0 = arbMsg0.Arb.Status.Code == int32(codes.OK)
+			log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
+		} else {
+			log.Printf("'%s' '%s' nil Arb Msg - Got Last SeqNum(%d)", client0Name, client0Stream0Name, lastSeqNum0)
+			break
+		}
+	}
 
 	// XXX Add packet Get handling
 

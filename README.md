@@ -33,7 +33,6 @@ go get wwwin-github.cisco.com/rehaddad/go-p4
 ```
 
 # TODO Development
-- Fix Packet buffers and arb resp to be per stream
 - Callback function can be registered per stream or global P4RTClientMap?
 - Need to support Stats e.g. Set/Write/Packets/Etc.
     
