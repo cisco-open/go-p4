@@ -1,0 +1,52 @@
+tables {
+  preamble {
+    id: 1
+    name: "example_table"
+    alias: "example_table"
+  }
+  match_fields {
+    id: 1
+    name: "field1"
+    bitwidth: 1
+    match_type: OPTIONAL
+  }
+  match_fields {
+    id: 2
+    name: "field2"
+    bitwidth: 1
+    match_type: OPTIONAL
+  }
+  action_refs {
+    id: 1
+  }
+  action_refs {
+    id: 2
+  }
+  action_refs {
+    id: 3
+    scope: DEFAULT_ONLY
+  }
+  const_default_action_id: 3
+  size: 8
+}
+actions {
+  preamble {
+    id: 1
+    name: "copy"
+    alias: "copy"
+  }
+}
+actions {
+  preamble {
+    id: 2
+    name: "trap"
+    alias: "trap"
+  }
+}
+actions {
+  preamble {
+    id: 3
+    name: "NoAction"
+    alias: "NoAction"
+  }
+}

@@ -4,7 +4,7 @@
                     "Name": "Client 1",
                     "ServerIP": "127.0.0.1",
                     "ServerPort": 57400,
-                    "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
+                    "P4InfoFile": "p4info/basic/basic.p4info.pb.txt",
                     "Streams": [
                         {
                                 "Name": "Stream 1",
@@ -30,7 +30,7 @@
                     "Name": "Client 2",
                     "ServerIP": "127.0.0.1",
                     "ServerPort": 57400,
-                    "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
+                    "P4InfoFile": "p4info/basic/basic.p4info.pb.txt",
                     "Streams": [
                         {
                                 "Name": "Stream 1",
@@ -44,7 +44,7 @@
                     "Name": "Client 3",
                     "ServerIP": "127.0.0.1",
                     "ServerPort": 57400,
-                    "P4InfoFile": "./p4info/wbb/wbb.p4info.pb.txt",
+                    "P4InfoFile": "p4info/basic/basic.p4info.pb.txt",
                     "Streams": [
                         {
                                 "Name": "Stream 1",

@@ -26,15 +26,11 @@ import (
 	"net"
 	"os"
 	"time"
-	"wwwin-github.cisco.com/rehaddad/go-p4/p4info/wbb"
 	"wwwin-github.cisco.com/rehaddad/go-p4/p4rt_client"
 	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
-	// 	codes "google.golang.org/grpc/codes"
-	// 	status1 "google.golang.org/grpc/status"
 )
 
-// XXX Should this be test case 1? Or is this an entrance to regression 1?
-//     How are tests written? This is not a script...
+// This is just an example usage
 func main() {
 	flag.Parse()
 	utils.UtilsInitLogger(*outputDir)
@@ -60,10 +56,9 @@ func main() {
 		log.Fatal(cErr0)
 	}
 
-	// XXX Noticed a race condition here between stream 1 and stream 2
+	// Potential race condition here between stream 1 and stream 2
 	// It is a bit random which one comes up first. If stream 2 comes up first
 	// then stream 1 does not become primary at all.
-	// In this case, the sequence number is messed up (expecting 2, but we got 1)
 
 	// Check primary state
 	log.Printf("'%s' Checking Primary state\n", client0)
@@ -103,7 +98,7 @@ func main() {
 
 	// Set Forwarding pipeline
 	// Not associated with any streams, but we have to use the primary's
-	// Note, both arbMsg and arbMsg2 have the primary's Election Id
+	// Note, arbMsg1 have the primary's Election Id
 	err = client0.SetForwardingPipelineConfig(&p4_v1.SetForwardingPipelineConfigRequest{
 		DeviceId:   arbMsg1.Arb.DeviceId,
 		ElectionId: arbMsg1.Arb.ElectionId,
@@ -132,20 +127,79 @@ func main() {
 	err = client0.Write(&p4_v1.WriteRequest{
 		DeviceId:   arbMsg1.Arb.DeviceId,
 		ElectionId: arbMsg1.Arb.ElectionId,
-		Updates: wbb.AclWbbIngressTableEntryGet([]*wbb.AclWbbIngressTableEntryInfo{
-			&wbb.AclWbbIngressTableEntryInfo{
-				Type:          p4_v1.Update_INSERT,
-				EtherType:     0x6007,
-				EtherTypeMask: 0xFFFF,
-			},
-			&wbb.AclWbbIngressTableEntryInfo{
-				Type:    p4_v1.Update_INSERT,
-				IsIpv4:  0x1,
-				Ttl:     0x1,
-				TtlMask: 0xFF,
-			},
-		}),
-		Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
+		Updates: []*p4_v1.Update {
+                        {
+                	        Type: p4_v1.Update_INSERT,
+                                Entity: &p4_v1.Entity{
+                        	        Entity: &p4_v1.Entity_TableEntry{
+                                	        TableEntry: &p4_v1.TableEntry{
+                                        	        TableId: 123,
+                                                        Match: []*p4_v1.FieldMatch {
+                                                	        {
+                                                        	        FieldId: 1,
+                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
+									        Optional: &p4_v1.FieldMatch_Optional{
+										        Value: []byte{byte(1)},
+									        },
+								        },
+                                                                },
+                                                                {
+                                                        	        FieldId: 2,
+                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
+									        Optional: &p4_v1.FieldMatch_Optional{
+										        Value: []byte{byte(1)},
+									        },
+								        },
+                                                                },
+                                                        },
+                                                        Action: &p4_v1.TableAction{
+							        Type: &p4_v1.TableAction_Action{
+								        Action: &p4_v1.Action{
+									        ActionId: 1,
+								        },
+							        },
+						        },
+                                                },
+                                        },
+                                },
+                        },
+                        {
+                	        Type: p4_v1.Update_INSERT,
+                                Entity: &p4_v1.Entity{
+                        	        Entity: &p4_v1.Entity_TableEntry{
+                                	        TableEntry: &p4_v1.TableEntry{
+                                        	        TableId: 1,
+                                                        Match: []*p4_v1.FieldMatch {
+                                                	        {
+                                                        	        FieldId: 1,
+                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
+									        Optional: &p4_v1.FieldMatch_Optional{
+										        Value: []byte{byte(2)},
+									        },
+								        },
+                                                                },
+                                                                {
+                                                        	        FieldId: 2,
+                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
+									        Optional: &p4_v1.FieldMatch_Optional{
+										        Value: []byte{byte(2)},
+									        },
+								        },
+                                                                },
+                                                        },
+                                                        Action: &p4_v1.TableAction{
+							        Type: &p4_v1.TableAction_Action{
+								        Action: &p4_v1.Action{
+									        ActionId: 1,
+								        },
+							        },
+						        },
+                                                },
+                                        },
+                                },
+                        },
+                },
+                Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -227,12 +281,9 @@ func main() {
 		}
 	}
 
-	// XXX Add packet Get handling
-
 	counter := 0
 ForEver:
 	for {
-		// XXX do things
 		select {
 		case <-time.After(1 * time.Microsecond):
 			if counter > 100000 {
@@ -272,5 +323,5 @@ ForEver:
 
 	client0.ServerDisconnect()
 
-	// XXX Second device stream still up
+	// XXX Second device stream still up (should be cleaned up on exit)
 }

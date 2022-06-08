@@ -62,7 +62,7 @@ func (p *P4RTClientMap) ClientGet(clientName *string) (*P4RTClient, error) {
 	return nil, fmt.Errorf("Client '%s' Does Not exist", clientName)
 }
 
-// XXX Rewrite this
+// Helper function to bootstrap things from a JSON file
 func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverPort int) (*P4RTParameters, error) {
 	// Read params JSON file to configure the setup
 	params, err := P4RTParameterLoad(jsonFile)
