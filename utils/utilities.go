@@ -30,7 +30,7 @@ func P4InfoLoad(fileName *string) (p4_v1_config.P4Info, error) {
 
 	p4infoFile, err := ioutil.ReadFile(*fileName)
 	if err != nil {
-		log.Printf("ERROR Could not open file %s", fileName)
+		log.Printf("ERROR Could not open file %s", *fileName)
 	} else {
 		err = proto.UnmarshalText(string(p4infoFile), &p4Info)
 	}

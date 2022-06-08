@@ -59,7 +59,7 @@ func (p *P4RTClientMap) ClientGet(clientName *string) (*P4RTClient, error) {
 	}
 	p.client_mu.Unlock()
 
-	return nil, fmt.Errorf("Client '%s' Does Not exist", clientName)
+	return nil, fmt.Errorf("Client '%s' Does Not exist", *clientName)
 }
 
 // Helper function to bootstrap things from a JSON file

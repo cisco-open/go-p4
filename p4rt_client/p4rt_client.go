@@ -464,7 +464,7 @@ func (p *P4RTClient) streamChannelGet(streamName *string) *P4RTClientStream {
 func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 	cStream := p.streamChannelGet(streamName)
 	if cStream == nil {
-		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
+		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
 	log.Printf("'%s' Destroying '%s'", p, cStream)
@@ -489,7 +489,7 @@ func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamMessageRequest) error {
 	cStream := p.streamChannelGet(streamName)
 	if cStream == nil {
-		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
+		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
 	log.Printf("'%s' '%s' StreamChannelSendMsg: %s\n", p, cStream, msg)
@@ -522,7 +522,7 @@ func (p *P4RTClient) StreamChannelGetArbitrationResp(streamName *string,
 
 	cStream := p.streamChannelGet(streamName)
 	if cStream == nil {
-		return seqNum, respArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
+		return seqNum, respArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
 	seqNum, respArbr = cStream.GetArbitration(minSeqNum)
@@ -538,7 +538,7 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 
 	cStream := p.streamChannelGet(streamName)
 	if cStream == nil {
-		return seqNum, pktInfo, fmt.Errorf("'%s' Could not find stream(%s)\n", p, streamName)
+		return seqNum, pktInfo, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
 	seqNum, pktInfo = cStream.GetPacket(minSeqNum)
