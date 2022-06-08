@@ -278,10 +278,11 @@ func NewP4RTClientStream(params *P4RTStreamParameters, stream p4_v1.P4Runtime_St
 type P4RTClient struct {
 	Params P4RTClientParameters //Make a copy
 
-	client_mu  sync.Mutex // Protects the following:
-	connection *grpc.ClientConn
-	p4rtClient p4_v1.P4RuntimeClient
-	streams    map[string]*P4RTClientStream // We can have multiple streams per client
+	client_mu     sync.Mutex // Protects the following:
+	connection    *grpc.ClientConn
+	connectionSet bool
+	p4rtClient    p4_v1.P4RuntimeClient
+	streams       map[string]*P4RTClientStream // We can have multiple streams per client
 	// end client_mu Protection
 }
 
@@ -294,11 +295,24 @@ func (p *P4RTClient) String() string {
 	return fmt.Sprintf("%s(%s)", p.Params.Name, p.getAddress())
 }
 
-func (p *P4RTClient) ServerConnect() error {
+func (p *P4RTClient) P4rtClientSet(client p4_v1.P4RuntimeClient) error {
 	p.client_mu.Lock()
 	defer p.client_mu.Unlock()
 
 	if p.connection != nil {
+		return fmt.Errorf("'%s' Client Already connected", p)
+	}
+	p.p4rtClient = client
+	p.connectionSet = true
+
+	return nil
+}
+
+func (p *P4RTClient) ServerConnect() error {
+	p.client_mu.Lock()
+	defer p.client_mu.Unlock()
+
+	if (p.connection != nil) || p.connectionSet {
 		return fmt.Errorf("'%s' Client Already connected", p)
 	}
 
@@ -318,23 +332,27 @@ func (p *P4RTClient) ServerConnect() error {
 }
 
 func (p *P4RTClient) ServerDisconnect() {
+	p.client_mu.Lock()
+	defer p.client_mu.Unlock()
+
 	if p.connection != nil {
 		log.Printf("'%s' Disconnecting from Server\n", p)
 		p.connection.Close()
 		p.connection = nil
 	}
+
+	p.connectionSet = false
 }
 
 func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 	p.client_mu.Lock()
-	if p.connection == nil {
+	if (p.connection == nil) && (p.connectionSet == false) {
 		p.client_mu.Unlock()
 		return fmt.Errorf("'%s' Client Not connected", p)
 	}
 
 	if p.streams == nil {
-		p.client_mu.Unlock()
-		return fmt.Errorf("'%s' P4RTClient Not properly Initialized (nil streams)", p)
+		p.streams = make(map[string]*P4RTClientStream)
 	}
 
 	if _, found := p.streams[params.Name]; found {
@@ -421,8 +439,10 @@ func (p *P4RTClient) streamChannelGet(streamName *string) *P4RTClientStream {
 	p.client_mu.Lock()
 	defer p.client_mu.Unlock()
 
-	if cStream, found := p.streams[*streamName]; found {
-		return cStream
+	if p.streams != nil {
+		if cStream, found := p.streams[*streamName]; found {
+			return cStream
+		}
 	}
 
 	return nil
@@ -446,8 +466,10 @@ func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 
 	// Remove from map
 	p.client_mu.Lock()
-	if _, found := p.streams[*streamName]; found {
-		delete(p.streams, *streamName)
+	if p.streams != nil {
+		if _, found := p.streams[*streamName]; found {
+			delete(p.streams, *streamName)
+		}
 	}
 	p.client_mu.Unlock()
 
@@ -516,7 +538,7 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 
 func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelineConfigRequest) error {
 	p.client_mu.Lock()
-	if p.connection == nil {
+	if (p.connection == nil) && (p.connectionSet == false) {
 		p.client_mu.Unlock()
 		return fmt.Errorf("'%s' Client Not connected", p)
 	}
@@ -533,7 +555,7 @@ func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelin
 
 func (p *P4RTClient) GetForwardingPipelineConfig(msg *p4_v1.GetForwardingPipelineConfigRequest) (*p4_v1.GetForwardingPipelineConfigResponse, error) {
 	p.client_mu.Lock()
-	if p.connection == nil {
+	if (p.connection == nil) && (p.connectionSet == false) {
 		p.client_mu.Unlock()
 		return nil, fmt.Errorf("'%s' Client Not connected", p)
 	}
@@ -552,7 +574,7 @@ func (p *P4RTClient) GetForwardingPipelineConfig(msg *p4_v1.GetForwardingPipelin
 
 func (p *P4RTClient) Capabilities(msg *p4_v1.CapabilitiesRequest) (*p4_v1.CapabilitiesResponse, error) {
 	p.client_mu.Lock()
-	if p.connection == nil {
+	if (p.connection == nil) && (p.connectionSet == false) {
 		p.client_mu.Unlock()
 		return nil, fmt.Errorf("'%s' Client Not connected", p)
 	}
@@ -571,7 +593,7 @@ func (p *P4RTClient) Capabilities(msg *p4_v1.CapabilitiesRequest) (*p4_v1.Capabi
 
 func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 	p.client_mu.Lock()
-	if p.connection == nil {
+	if (p.connection == nil) && (p.connectionSet == false) {
 		p.client_mu.Unlock()
 		return fmt.Errorf("'%s' Client Not connected", p)
 	}
@@ -588,7 +610,7 @@ func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 
 func (p *P4RTClient) Read(msg *p4_v1.ReadRequest) (p4_v1.P4Runtime_ReadClient, error) {
 	p.client_mu.Lock()
-	if p.connection == nil {
+	if (p.connection == nil) && (p.connectionSet == false) {
 		p.client_mu.Unlock()
 		return nil, fmt.Errorf("'%s' Client Not connected", p)
 	}
@@ -610,9 +632,6 @@ func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 	client := &P4RTClient{
 		Params: *params,
 	}
-
-	// Initialize
-	client.streams = make(map[string]*P4RTClientStream)
 
 	return client
 }
