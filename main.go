@@ -20,14 +20,14 @@ package main
 
 import (
 	"flag"
+	"github.com/cisco-open/go-p4/p4rt_client"
+	"github.com/cisco-open/go-p4/utils"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	codes "google.golang.org/grpc/codes"
 	"log"
 	"net"
 	"os"
 	"time"
-	"wwwin-github.cisco.com/rehaddad/go-p4/p4rt_client"
-	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
 )
 
 // This is just an example usage
@@ -127,79 +127,79 @@ func main() {
 	err = client0.Write(&p4_v1.WriteRequest{
 		DeviceId:   arbMsg1.Arb.DeviceId,
 		ElectionId: arbMsg1.Arb.ElectionId,
-		Updates: []*p4_v1.Update {
-                        {
-                	        Type: p4_v1.Update_INSERT,
-                                Entity: &p4_v1.Entity{
-                        	        Entity: &p4_v1.Entity_TableEntry{
-                                	        TableEntry: &p4_v1.TableEntry{
-                                        	        TableId: 123,
-                                                        Match: []*p4_v1.FieldMatch {
-                                                	        {
-                                                        	        FieldId: 1,
-                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
-									        Optional: &p4_v1.FieldMatch_Optional{
-										        Value: []byte{byte(1)},
-									        },
-								        },
-                                                                },
-                                                                {
-                                                        	        FieldId: 2,
-                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
-									        Optional: &p4_v1.FieldMatch_Optional{
-										        Value: []byte{byte(1)},
-									        },
-								        },
-                                                                },
-                                                        },
-                                                        Action: &p4_v1.TableAction{
-							        Type: &p4_v1.TableAction_Action{
-								        Action: &p4_v1.Action{
-									        ActionId: 1,
-								        },
-							        },
-						        },
-                                                },
-                                        },
-                                },
-                        },
-                        {
-                	        Type: p4_v1.Update_INSERT,
-                                Entity: &p4_v1.Entity{
-                        	        Entity: &p4_v1.Entity_TableEntry{
-                                	        TableEntry: &p4_v1.TableEntry{
-                                        	        TableId: 1,
-                                                        Match: []*p4_v1.FieldMatch {
-                                                	        {
-                                                        	        FieldId: 1,
-                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
-									        Optional: &p4_v1.FieldMatch_Optional{
-										        Value: []byte{byte(2)},
-									        },
-								        },
-                                                                },
-                                                                {
-                                                        	        FieldId: 2,
-                                                                        FieldMatchType: &p4_v1.FieldMatch_Optional_{
-									        Optional: &p4_v1.FieldMatch_Optional{
-										        Value: []byte{byte(2)},
-									        },
-								        },
-                                                                },
-                                                        },
-                                                        Action: &p4_v1.TableAction{
-							        Type: &p4_v1.TableAction_Action{
-								        Action: &p4_v1.Action{
-									        ActionId: 1,
-								        },
-							        },
-						        },
-                                                },
-                                        },
-                                },
-                        },
-                },
-                Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
+		Updates: []*p4_v1.Update{
+			{
+				Type: p4_v1.Update_INSERT,
+				Entity: &p4_v1.Entity{
+					Entity: &p4_v1.Entity_TableEntry{
+						TableEntry: &p4_v1.TableEntry{
+							TableId: 123,
+							Match: []*p4_v1.FieldMatch{
+								{
+									FieldId: 1,
+									FieldMatchType: &p4_v1.FieldMatch_Optional_{
+										Optional: &p4_v1.FieldMatch_Optional{
+											Value: []byte{byte(1)},
+										},
+									},
+								},
+								{
+									FieldId: 2,
+									FieldMatchType: &p4_v1.FieldMatch_Optional_{
+										Optional: &p4_v1.FieldMatch_Optional{
+											Value: []byte{byte(1)},
+										},
+									},
+								},
+							},
+							Action: &p4_v1.TableAction{
+								Type: &p4_v1.TableAction_Action{
+									Action: &p4_v1.Action{
+										ActionId: 1,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Type: p4_v1.Update_INSERT,
+				Entity: &p4_v1.Entity{
+					Entity: &p4_v1.Entity_TableEntry{
+						TableEntry: &p4_v1.TableEntry{
+							TableId: 1,
+							Match: []*p4_v1.FieldMatch{
+								{
+									FieldId: 1,
+									FieldMatchType: &p4_v1.FieldMatch_Optional_{
+										Optional: &p4_v1.FieldMatch_Optional{
+											Value: []byte{byte(2)},
+										},
+									},
+								},
+								{
+									FieldId: 2,
+									FieldMatchType: &p4_v1.FieldMatch_Optional_{
+										Optional: &p4_v1.FieldMatch_Optional{
+											Value: []byte{byte(2)},
+										},
+									},
+								},
+							},
+							Action: &p4_v1.TableAction{
+								Type: &p4_v1.TableAction_Action{
+									Action: &p4_v1.Action{
+										ActionId: 1,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
 	})
 	if err != nil {
 		log.Fatal(err)

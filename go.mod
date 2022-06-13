@@ -1,4 +1,4 @@
-module wwwin-github.cisco.com/rehaddad/go-p4
+module github.com/cisco-open/go-p4
 
 go 1.17
 

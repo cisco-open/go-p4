@@ -23,13 +23,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/cisco-open/go-p4/utils"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	grpc "google.golang.org/grpc"
 	"io/ioutil"
 	"log"
 	"strconv"
 	"sync"
-	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
 )
 
 const (

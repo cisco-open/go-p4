@@ -20,10 +20,10 @@ package p4rt_client
 
 import (
 	"fmt"
+	"github.com/cisco-open/go-p4/utils"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	"log"
 	"sync"
-	"wwwin-github.cisco.com/rehaddad/go-p4/utils"
 )
 
 type P4RTClientMap struct {
