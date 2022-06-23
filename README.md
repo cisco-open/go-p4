@@ -1,5 +1,7 @@
 # go-p4
 
+Note, when running with '-log_dir foo', make sure 'foo' directory exists.
+
 ## Description
 At a high level, this package is intended to help drive P4Runtime use cases (clients and tests included).
 It contains wrappers to handle connections, streams, reading from streams, managing go routines, counters, etc.

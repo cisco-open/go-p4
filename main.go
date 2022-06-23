@@ -22,9 +22,9 @@ import (
 	"flag"
 	"github.com/cisco-open/go-p4/p4rt_client"
 	"github.com/cisco-open/go-p4/utils"
+	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	codes "google.golang.org/grpc/codes"
-	"log"
 	"net"
 	"os"
 	"time"
@@ -33,14 +33,14 @@ import (
 // This is just an example usage
 func main() {
 	flag.Parse()
-	utils.UtilsInitLogger(*outputDir)
 	validateArgs()
-	log.Println("Called as:", os.Args)
+
+	glog.Infof("Called as: %s", os.Args)
 
 	clientMap := p4rt_client.NewP4RTClientMap()
 	params, err := clientMap.InitfromJson(jsonFile, serverIP, *serverPort)
 	if err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 
 	// Grab first Client Name (from JSON)
@@ -53,7 +53,7 @@ func main() {
 	// Grab first client
 	client0, cErr0 := clientMap.ClientGet(&client0Name)
 	if cErr0 != nil {
-		log.Fatal(cErr0)
+		glog.Fatal(cErr0)
 	}
 
 	// Potential race condition here between stream 1 and stream 2
@@ -61,39 +61,39 @@ func main() {
 	// then stream 1 does not become primary at all.
 
 	// Check primary state
-	log.Printf("'%s' Checking Primary state\n", client0)
+	glog.Infof("'%s' Checking Primary state", client0)
 	lastSeqNum0, arbMsg0, arbErr0 := client0.StreamChannelGetArbitrationResp(&client0Stream0Name, 1)
 	if arbErr0 != nil {
-		log.Fatal(arbErr0)
+		glog.Fatal(arbErr0)
 	}
 	if arbMsg0 == nil {
-		log.Fatalf("'%s' nil Arbitration", client0Stream0Name)
+		glog.Fatalf("'%s' nil Arbitration", client0Stream0Name)
 	}
 	isPrimary0 := arbMsg0.Arb.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
+	glog.Infof("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
 
 	// Let's see what Client0 stream1 has received as last arbitration
 	// Stream1 should have preempted
 	lastSeqNum1, arbMsg1, arbErr1 := client0.StreamChannelGetArbitrationResp(&client0Stream1Name, 1)
 	if arbErr1 != nil {
-		log.Fatal(arbErr1)
+		glog.Fatal(arbErr1)
 	}
 	if arbMsg1 == nil {
-		log.Fatalf("'%s' nil Arbitration", client0Stream1Name)
+		glog.Fatalf("'%s' nil Arbitration", client0Stream1Name)
 	}
 	isPrimary1 := arbMsg1.Arb.Status.Code == int32(codes.OK)
-	log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream1Name, isPrimary1, lastSeqNum1, arbMsg1.Arb.String())
+	glog.Infof("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream1Name, isPrimary1, lastSeqNum1, arbMsg1.Arb.String())
 
 	// Load P4Info file
 	p4Info, p4InfoErr := utils.P4InfoLoad(&params.Clients[0].P4InfoFile)
 	if p4InfoErr != nil {
-		log.Fatal(p4InfoErr)
+		glog.Fatal(p4InfoErr)
 	}
 
 	// Get Capbilities (for now, we just log it)
 	_, err = client0.Capabilities(&p4_v1.CapabilitiesRequest{})
 	if err != nil {
-		log.Printf("Capabilities err: %s", err)
+		glog.Warningf("Capabilities err: %s", err)
 	}
 
 	// Set Forwarding pipeline
@@ -111,7 +111,7 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 
 	// Get Forwarding pipeline (for now, we just log it)
@@ -120,7 +120,7 @@ func main() {
 		ResponseType: p4_v1.GetForwardingPipelineConfigRequest_ALL,
 	})
 	if err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 
 	// Write is not associated with any streams, but we have to use the primary's
@@ -202,7 +202,12 @@ func main() {
 		Atomicity: p4_v1.WriteRequest_CONTINUE_ON_ERROR,
 	})
 	if err != nil {
-		log.Fatal(err)
+		countOK, countNotOK, errDetails := p4rt_client.P4RTWriteErrParse(err)
+		if glog.V(2) {
+			glog.Infof("Write Partial Errors %d/%d: %s", countOK, countNotOK, errDetails)
+		}
+	} else {
+		glog.Info("Write Success")
 	}
 
 	// Read ALL and log
@@ -215,15 +220,17 @@ func main() {
 		},
 	})
 	if rErr != nil {
-		log.Fatal(rErr)
+		glog.Fatal(rErr)
 	}
 	for {
 		readResp, respErr := rStream.Recv()
 		if respErr != nil {
-			log.Printf("Read Response Err: %s", respErr)
+			glog.Warningf("Read Response Err: %s", respErr)
 			break
 		} else {
-			log.Printf("Read Response: %s", readResp)
+			if glog.V(2) {
+				glog.Infof("Read Response: %s", readResp)
+			}
 		}
 	}
 
@@ -248,19 +255,21 @@ func main() {
 			},
 		})
 	if err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 
 	// Get the last sequence number received so far
 	lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetArbitrationResp(&client0Stream0Name, 0)
 	if arbErr0 != nil {
-		log.Fatal(arbErr0)
+		glog.Fatal(arbErr0)
 	}
 	if arbMsg0 != nil {
 		isPrimary0 = arbMsg0.Arb.Status.Code == int32(codes.OK)
-		log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
+		glog.Infof("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
 	}
-	log.Printf("'%s' '%s' Got Last SeqNum(%d)", client0Name, client0Stream0Name, lastSeqNum0)
+	if glog.V(2) {
+		glog.Infof("'%s' '%s' Got Last SeqNum(%d)", client0Name, client0Stream0Name, lastSeqNum0)
+	}
 
 	// Try removing the current Primary
 	client0.StreamChannelDestroy(&client0Stream1Name)
@@ -270,13 +279,15 @@ func main() {
 	for {
 		lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetArbitrationResp(&client0Stream0Name, lastSeqNum0)
 		if arbErr0 != nil {
-			log.Fatal(arbErr0)
+			glog.Fatal(arbErr0)
 		}
 		if arbMsg0 != nil {
 			isPrimary0 = arbMsg0.Arb.Status.Code == int32(codes.OK)
-			log.Printf("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
+			glog.Infof("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
 		} else {
-			log.Printf("'%s' '%s' nil Arb Msg - Got Last SeqNum(%d)", client0Name, client0Stream0Name, lastSeqNum0)
+			if glog.V(2) {
+				glog.Infof("'%s' '%s' nil Arb Msg - Got Last SeqNum(%d)", client0Name, client0Stream0Name, lastSeqNum0)
+			}
 			break
 		}
 	}
@@ -312,16 +323,20 @@ ForEver:
 					},
 				})
 			if err != nil {
-				log.Fatal(err)
+				glog.Fatal(err)
 			}
 
-			log.Printf("Going back to sleep...")
+			if glog.V(2) {
+				glog.Infof("Going back to sleep...")
+			}
 		}
 	}
 
 	client0.StreamChannelDestroy(&client0Stream0Name)
 
 	client0.ServerDisconnect()
+
+	glog.Flush()
 
 	// XXX Second device stream still up (should be cleaned up on exit)
 }

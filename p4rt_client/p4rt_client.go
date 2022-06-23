@@ -23,11 +23,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/cisco-open/go-p4/utils"
+	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status1 "google.golang.org/grpc/status"
 	"io/ioutil"
-	"log"
+	"reflect"
 	"strconv"
 	"sync"
 )
@@ -61,7 +63,7 @@ func P4RTParameterLoad(fileName *string) (*P4RTParameters, error) {
 
 	jsonFile, err := ioutil.ReadFile(*fileName)
 	if err != nil {
-		utils.LogErrorf("Could not open file %s", *fileName)
+		glog.Errorf("Could not open file %s", *fileName)
 	} else {
 		err = json.Unmarshal(jsonFile, &param)
 	}
@@ -145,7 +147,7 @@ func (p *P4RTClientStream) QueueArbt(arbInfo *P4RTArbInfo) {
 	if qLen >= p.arbQSize {
 		p.arbCounters.RxArbCntrDrop++
 		p.arb_mu.Unlock()
-		log.Printf("'%s' WARNING Queue Full Dropping QSize(%d) Arb(%s)",
+		glog.Warningf("'%s' Queue Full Dropping QSize(%d) Arb(%s)",
 			p, qLen, arbInfo.Arb)
 		return
 	}
@@ -171,8 +173,10 @@ func (p *P4RTClientStream) GetArbitration(minSeqNum uint64) (uint64, *P4RTArbInf
 	defer p.arb_mu.Unlock()
 
 	for p.arbCounters.RxArbCntr < minSeqNum {
-		log.Printf("'%s' Waiting on Arbitration message (%d/%d)\n",
-			p, p.arbCounters.RxArbCntr, minSeqNum)
+		if glog.V(2) {
+			glog.Infof("'%s' Waiting on Arbitration message (%d/%d)\n",
+				p, p.arbCounters.RxArbCntr, minSeqNum)
+		}
 		p.arbCond.Wait()
 	}
 
@@ -210,7 +214,7 @@ func (p *P4RTClientStream) QueuePacket(pktInfo *P4RTPacketInfo) {
 	if qLen >= p.pktQSize {
 		p.pktCounters.RxPktCntrDrop++
 		p.pkt_mu.Unlock()
-		log.Printf("'%s' WARNING Queue Full Dropping QSize(%d) Pkt(%s)",
+		glog.Warningf("'%s' Queue Full Dropping QSize(%d) Pkt(%s)",
 			p, qLen, pktInfo.Pkt)
 		return
 	}
@@ -236,8 +240,10 @@ func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo)
 	defer p.pkt_mu.Unlock()
 
 	for p.pktCounters.RxPktCntr < minSeqNum {
-		log.Printf("'%s' Waiting on Packet (%d/%d)\n",
-			p, p.pktCounters.RxPktCntr, minSeqNum)
+		if glog.V(2) {
+			glog.Infof("'%s' Waiting on Packet (%d/%d)\n",
+				p, p.pktCounters.RxPktCntr, minSeqNum)
+		}
 		p.pktCond.Wait()
 	}
 
@@ -326,14 +332,18 @@ func (p *P4RTClient) ServerConnect() error {
 		return fmt.Errorf("'%s' Client Already connected", p)
 	}
 
-	log.Printf("'%s' Connecting to Server\n", p)
+	if glog.V(2) {
+		glog.Infof("'%s' Connecting to Server\n", p)
+	}
 	conn, err := grpc.Dial(p.getAddress(), grpc.WithInsecure())
 	if err != nil {
-		utils.LogErrorf("'%s' Connecting to Server: %s", p, err)
+		glog.Errorf("'%s' Connecting to Server: %s", p, err)
 		return err
 	}
 	p.connection = conn
-	log.Printf("'%s' Connected to Server", p)
+	if glog.V(1) {
+		glog.Infof("'%s' Connected to Server", p)
+	}
 
 	// Create a new P4RuntimeClient instance
 	p.p4rtClient = p4_v1.NewP4RuntimeClient(conn)
@@ -346,7 +356,9 @@ func (p *P4RTClient) ServerDisconnect() {
 	defer p.client_mu.Unlock()
 
 	if p.connection != nil {
-		log.Printf("'%s' Disconnecting from Server\n", p)
+		if glog.V(1) {
+			glog.Infof("'%s' Disconnecting from Server\n", p)
+		}
 		p.connection.Close()
 		p.connection = nil
 	}
@@ -374,7 +386,7 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	stream, gerr := p.p4rtClient.StreamChannel(ctx)
 	if gerr != nil {
-		utils.LogErrorf("'%s' StreamChannel: %s", p, gerr)
+		glog.Errorf("'%s' StreamChannel: %s", p, gerr)
 		p.client_mu.Unlock()
 		return gerr
 	}
@@ -389,7 +401,9 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 
 	// For ever read from stream
 	go func(iStream *P4RTClientStream) {
-		log.Printf("'%s' '%s' Started\n", p, iStream)
+		if glog.V(2) {
+			glog.Infof("'%s' '%s' Started\n", p, iStream)
+		}
 		upChan <- true
 
 		for {
@@ -406,11 +420,13 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 			if stream_err != nil {
 				// XXX When the server exits, we get an EOF
 				// What should we do with that? Currently we just exit the routine
-				log.Printf("'%s' '%s' Client Recv Error %v\n", p, iStream, stream_err)
+				glog.Warningf("'%s' '%s' Client Recv Error %v\n", p, iStream, stream_err)
 				break
 			}
 
-			log.Printf("'%s' '%s' Received %s\n", p, iStream, event.String())
+			if glog.V(2) {
+				glog.Infof("'%s' '%s' Received %s\n", p, iStream, event.String())
+			}
 
 			switch event.Update.(type) {
 			case *p4_v1.StreamMessageResponse_Arbitration:
@@ -426,22 +442,29 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 			case *p4_v1.StreamMessageResponse_Other:
 			case *p4_v1.StreamMessageResponse_Error:
 			default:
-				log.Printf("ERROR '%s' '%s' Received %s\n", p, iStream, event.String())
+				glog.Errorf("'%s' '%s' Received %s\n", p, iStream, event.String())
 			}
 		}
 
 		// Cleanup the stream, lock and remove from map
-		log.Printf("'%s' '%s' Exiting - calling to destroy stream\n", p, iStream)
+		if glog.V(1) {
+			glog.Infof("'%s' '%s' Exiting - calling to destroy stream\n", p, iStream)
+		}
 		p.StreamChannelDestroy(&iStream.Params.Name)
-		log.Printf("'%s' '%s' Exited\n", p, iStream)
+		if glog.V(1) {
+			glog.Infof("'%s' '%s' Exited\n", p, iStream)
+		}
 
 	}(cStream)
 
 	// Wait for the Tx Routine to start
-	log.Printf("'%s' Waiting for '%s' Go Routine\n", p, cStream)
+	if glog.V(2) {
+		glog.Infof("'%s' Waiting for '%s' Go Routine\n", p, cStream)
+	}
 	<-upChan
-	log.Printf("'%s' Successfully Spawned '%s'\n", p, cStream)
-
+	if glog.V(1) {
+		glog.Infof("'%s' Successfully Spawned '%s'\n", p, cStream)
+	}
 	return nil
 }
 
@@ -467,7 +490,9 @@ func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
-	log.Printf("'%s' Destroying '%s'", p, cStream)
+	if glog.V(1) {
+		glog.Infof("'%s' Destroying '%s'", p, cStream)
+	}
 	// Make sure the RX Routine is going to stop
 	cStream.Stop()
 	// Force the RX Recv() to wake up
@@ -492,19 +517,23 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
-	log.Printf("'%s' '%s' StreamChannelSendMsg: %s\n", p, cStream, msg)
+	if glog.V(2) {
+		glog.Infof("'%s' '%s' StreamChannelSendMsg: %s\n", p, cStream, msg)
+	}
 	switch msg.Update.(type) {
 	case *p4_v1.StreamMessageRequest_Packet:
 		pkt := msg.GetPacket()
 		if pkt != nil {
-			log.Printf("'%s' '%s' StreamChannelSendMsg: Packet: %s\n", p, cStream, hex.EncodeToString(pkt.Payload))
+			if glog.V(2) {
+				glog.Infof("'%s' '%s' StreamChannelSendMsg: Packet: %s\n", p, cStream, hex.EncodeToString(pkt.Payload))
+			}
 		}
 	default:
 	}
 
 	err := cStream.stream.Send(msg)
 	if err != nil {
-		utils.LogErrorf("'%s' '%s' '%s': '%s'\n", p, cStream, msg, err)
+		glog.Errorf("'%s' '%s' '%s': '%s'\n", p, cStream, msg, err)
 		return err
 	}
 
@@ -554,10 +583,12 @@ func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelin
 	}
 	p.client_mu.Unlock()
 
-	log.Printf("'%s' SetForwardingPipelineConfig: %s\n", p, msg)
+	if glog.V(2) {
+		glog.Infof("'%s' SetForwardingPipelineConfig: %s\n", p, msg)
+	}
 	_, err := p.p4rtClient.SetForwardingPipelineConfig(context.Background(), msg)
 	if err != nil {
-		utils.LogErrorf("'%s' SetForwardingPipelineConfig: %s\n", p, err)
+		glog.Errorf("'%s' SetForwardingPipelineConfig: %s\n", p, err)
 	}
 
 	return err
@@ -571,12 +602,16 @@ func (p *P4RTClient) GetForwardingPipelineConfig(msg *p4_v1.GetForwardingPipelin
 	}
 	p.client_mu.Unlock()
 
-	log.Printf("'%s' GetForwardingPipelineConfig: %s\n", p, msg)
+	if glog.V(2) {
+		glog.Infof("'%s' GetForwardingPipelineConfig: %s\n", p, msg)
+	}
 	resp, err := p.p4rtClient.GetForwardingPipelineConfig(context.Background(), msg)
 	if err != nil {
-		utils.LogErrorf("'%s' GetForwardingPipelineConfig: %s\n", p, err)
+		glog.Errorf("'%s' GetForwardingPipelineConfig: %s\n", p, err)
 	} else {
-		log.Printf("'%s' GetForwardingPipelineConfigResponse: %s\n", p, resp)
+		if glog.V(2) {
+			glog.Infof("'%s' GetForwardingPipelineConfigResponse: %s\n", p, resp)
+		}
 	}
 
 	return resp, err
@@ -590,12 +625,16 @@ func (p *P4RTClient) Capabilities(msg *p4_v1.CapabilitiesRequest) (*p4_v1.Capabi
 	}
 	p.client_mu.Unlock()
 
-	log.Printf("'%s' Capabilities: %s\n", p, msg)
+	if glog.V(2) {
+		glog.Infof("'%s' Capabilities: %s\n", p, msg)
+	}
 	resp, err := p.p4rtClient.Capabilities(context.Background(), msg)
 	if err != nil {
-		utils.LogErrorf("'%s' Capabilities: %s\n", p, err)
+		glog.Warningf("'%s' Capabilities: %s\n", p, err)
 	} else {
-		log.Printf("'%s' Capabilities: %s\n", p, resp)
+		if glog.V(2) {
+			glog.Infof("'%s' Capabilities: %s\n", p, resp)
+		}
 	}
 
 	return resp, err
@@ -609,10 +648,12 @@ func (p *P4RTClient) Write(msg *p4_v1.WriteRequest) error {
 	}
 	p.client_mu.Unlock()
 
-	log.Printf("(%s) Write: %s\n", p, msg)
+	if glog.V(2) {
+		glog.Infof("(%s) Write: %s\n", p, msg)
+	}
 	_, err := p.p4rtClient.Write(context.Background(), msg)
 	if err != nil {
-		utils.LogErrorf("'%s' Write: %s\n", p, err)
+		glog.Warningf("'%s' Write: %s\n", p, err)
 	}
 
 	return err
@@ -626,10 +667,12 @@ func (p *P4RTClient) Read(msg *p4_v1.ReadRequest) (p4_v1.P4Runtime_ReadClient, e
 	}
 	p.client_mu.Unlock()
 
-	log.Printf("(%s) Read: %s\n", p, msg)
+	if glog.V(2) {
+		glog.Infof("(%s) Read: %s\n", p, msg)
+	}
 	stream, err := p.p4rtClient.Read(context.Background(), msg)
 	if err != nil {
-		utils.LogErrorf("'%s' Read: %s\n", p, err)
+		glog.Errorf("'%s' Read: %s\n", p, err)
 	}
 
 	return stream, err
@@ -644,4 +687,33 @@ func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 	}
 
 	return client
+}
+
+// Helper function to parse the Write Errors
+func P4RTWriteErrParse(err error) (int, int, []*p4_v1.Error) {
+	countOK := 0
+	countNotOK := 0
+	var errDetails []*p4_v1.Error
+
+	statsDetails := status1.Convert(err).Details()
+	for _, statsDetail := range statsDetails {
+		if se, ok := statsDetail.(*p4_v1.Error); ok {
+			if glog.V(2) {
+				glog.Infof("p4Server.Write Detail Error: %d Msg: %s", se.GetCanonicalCode(), se.GetMessage())
+			}
+			errDetails = append(errDetails, se)
+			if se.GetCanonicalCode() == int32(codes.OK) {
+				countOK++
+			} else {
+				countNotOK++
+			}
+		} else {
+			glog.Fatalf("Error, not expecting Type %s", reflect.TypeOf(statsDetail))
+		}
+	}
+
+	if glog.V(2) {
+		glog.Infof("Write Response CountOK(%d) countNotOK(%d)", countOK, countNotOK)
+	}
+	return countOK, countNotOK, errDetails
 }
