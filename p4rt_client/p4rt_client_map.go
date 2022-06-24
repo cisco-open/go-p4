@@ -20,9 +20,8 @@ package p4rt_client
 
 import (
 	"fmt"
-	"github.com/cisco-open/go-p4/utils"
+	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
-	"log"
 	"sync"
 )
 
@@ -67,10 +66,12 @@ func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverP
 	// Read params JSON file to configure the setup
 	params, err := P4RTParameterLoad(jsonFile)
 	if err != nil {
-		utils.LogErrorf("%s", err)
+		glog.Errorf("%s", err)
 		return nil, err
 	}
-	log.Printf("Params: %s", P4RTParameterToString(params))
+	if glog.V(2) {
+		glog.Infof("Params: %s", P4RTParameterToString(params))
+	}
 
 	for index, clientParam := range params.Clients {
 		if len(clientParam.ServerIP) == 0 {
@@ -82,14 +83,14 @@ func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverP
 
 		newClient, nErr := p.ClientAdd(&clientParam)
 		if nErr != nil {
-			utils.LogErrorf("Could not add Client at Index(%d) %s", index, nErr)
+			glog.Errorf("Could not add Client at Index(%d) %s", index, nErr)
 			return nil, nErr
 		}
 
 		// Connect
 		err = newClient.ServerConnect()
 		if err != nil {
-			utils.LogErrorf("Could not Connect Client at Index(%d) %s", index, err)
+			glog.Errorf("Could not Connect Client at Index(%d) %s", index, err)
 			return nil, err
 		}
 
@@ -97,7 +98,7 @@ func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverP
 		for sIndex, sessionParams := range clientParam.Streams {
 			err = newClient.StreamChannelCreate(&sessionParams)
 			if err != nil {
-				utils.LogErrorf("Could not Stream Create at Index(%d) %s", sIndex, err)
+				glog.Errorf("Could not Stream Create at Index(%d) %s", sIndex, err)
 				return nil, err
 			}
 
@@ -113,7 +114,7 @@ func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverP
 				},
 			})
 			if err != nil {
-				utils.LogErrorf("Could not Stream SendMsg at Index(%d) %s", sIndex, err)
+				glog.Errorf("Could not Stream SendMsg at Index(%d) %s", sIndex, err)
 				return nil, err
 			}
 		}

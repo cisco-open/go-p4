@@ -3,6 +3,7 @@ module github.com/cisco-open/go-p4
 go 1.17
 
 require (
+	github.com/golang/glog v1.0.0
 	github.com/golang/protobuf v1.5.2
 	github.com/google/gopacket v1.1.19
 	github.com/p4lang/p4runtime v1.3.0

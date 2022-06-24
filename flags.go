@@ -20,14 +20,13 @@ package main
 
 import (
 	"flag"
-	"log"
+	"github.com/golang/glog"
 	"net"
 )
 
 // Command line args
 var (
-	outputDir  = flag.String("output_dir", "./output", "Output Directory")
-	serverIP   = flag.String("server_ip", "192.168.0.1", "P4RT Server IP")
+	serverIP   = flag.String("server_ip", "127.0.0.1", "P4RT Server IP")
 	serverPort = flag.Int("server_port", 57400, "P4RT Server Port")
 	jsonFile   = flag.String("json_file", "./json/example.json", "JSON Params File Path")
 )
@@ -36,6 +35,6 @@ func validateArgs() {
 	// Validate the IP
 	ip := net.ParseIP(*serverIP)
 	if ip == nil {
-		log.Fatalf("Invalid Server IP: %s", *serverIP)
+		glog.Fatalf("Invalid Server IP: %s", *serverIP)
 	}
 }

@@ -19,9 +19,9 @@
 package utils
 
 import (
+	"github.com/golang/glog"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"log"
 )
 
 // import net
@@ -69,7 +69,7 @@ func PacketICMPEchoRequestGet(l2 bool, srcMac []byte, dstMac []byte,
 		)
 	}
 	if err != nil {
-		log.Fatal(err)
+		glog.Fatal(err)
 	}
 
 	return buf.Bytes()
