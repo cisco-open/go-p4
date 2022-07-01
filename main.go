@@ -334,6 +334,11 @@ ForEver:
 
 	client0.StreamChannelDestroy(&client0Stream0Name)
 
+	// Check the stream error (for now we just read the first entry)
+	// Typically, the user should spawn a go routine listening on this channel
+	streamErr := <-client0.StreamTermErr
+	glog.Infof("Client (%s) stream err: '%s'", client0, streamErr)
+
 	client0.ServerDisconnect()
 
 	glog.Flush()
