@@ -121,9 +121,14 @@ func (p *P4RTStreamTermErr) String() string {
 }
 
 type P4RTClientStream struct {
-	Params     P4RTStreamParameters // Make a copy
+	Params     P4RTStreamParameters // Make a copy (initial config)
 	stream     p4_v1.P4Runtime_StreamChannelClient
 	cancelFunc context.CancelFunc
+
+	paramsMu   sync.Mutex     // Protects the following:
+	deviceId   uint64         // Based on last sent Arbitration message
+	electionId *p4_v1.Uint128 // Based on last sent Arbitration message
+	// end paramsMu Protection
 
 	stopMu sync.Mutex // Protects the following:
 	stop   bool
@@ -146,6 +151,43 @@ type P4RTClientStream struct {
 
 func (p *P4RTClientStream) String() string {
 	return fmt.Sprintf("Device(%d) Stream(%s)", p.Params.DeviceId, p.Params.Name)
+}
+
+func (p *P4RTClientStream) SetDeviceId(deviceId uint64) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	p.deviceId = deviceId
+}
+
+func (p *P4RTClientStream) GetDeviceId() uint64 {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	return p.deviceId
+}
+
+func (p *P4RTClientStream) SetElectionId(electionId *p4_v1.Uint128) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	p.electionId = electionId
+}
+
+func (p *P4RTClientStream) GetElectionId() *p4_v1.Uint128 {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	return p.electionId
+}
+
+func (p *P4RTClientStream) SetParams(deviceId uint64, electionId *p4_v1.Uint128) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	p.deviceId = deviceId
+	p.electionId = electionId
+}
+
+func (p *P4RTClientStream) GetParams() (uint64, *p4_v1.Uint128) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	return p.deviceId, p.electionId
 }
 
 func (p *P4RTClientStream) ShouldStop() bool {
@@ -561,6 +603,11 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 		glog.Infof("'%s' '%s' StreamChannelSendMsg: %s\n", p, cStream, msg)
 	}
 	switch msg.Update.(type) {
+	case *p4_v1.StreamMessageRequest_Arbitration:
+		arb := msg.GetArbitration()
+		if arb != nil {
+			cStream.SetParams(arb.GetDeviceId(), arb.GetElectionId())
+		}
 	case *p4_v1.StreamMessageRequest_Packet:
 		pkt := msg.GetPacket()
 		if pkt != nil {
@@ -578,6 +625,17 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 	}
 
 	return nil
+}
+
+func (p *P4RTClient) StreamGetParams(streamName *string) (uint64, *p4_v1.Uint128, error) {
+	cStream := p.streamChannelGet(streamName)
+	if cStream == nil {
+		return 0, nil, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
+	}
+
+	d, e := cStream.GetParams()
+
+	return d, e, nil
 }
 
 // Block until AT LEAST minSeqNum is observed
