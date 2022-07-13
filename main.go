@@ -72,6 +72,12 @@ func main() {
 	isPrimary0 := arbMsg0.Arb.Status.Code == int32(codes.OK)
 	glog.Infof("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream0Name, isPrimary0, lastSeqNum0, arbMsg0.Arb.String())
 
+	// Print the stream's params based on last sent arbitration
+	// These are automatically set based on the last sent arbitration message
+	client0Stream0deviceId, client0Stream0ElectionId, _ := client0.StreamGetParams(&client0Stream0Name)
+	glog.Infof("'%s' '%s' DeviceId:%d ElectionId:%s",
+		client0Name, client0Stream0Name, client0Stream0deviceId, client0Stream0ElectionId)
+
 	// Let's see what Client0 stream1 has received as last arbitration
 	// Stream1 should have preempted
 	lastSeqNum1, arbMsg1, arbErr1 := client0.StreamChannelGetArbitrationResp(&client0Stream1Name, 1)
@@ -83,6 +89,11 @@ func main() {
 	}
 	isPrimary1 := arbMsg1.Arb.Status.Code == int32(codes.OK)
 	glog.Infof("'%s' '%s' Got Primary(%v) SeqNum(%d) %s", client0Name, client0Stream1Name, isPrimary1, lastSeqNum1, arbMsg1.Arb.String())
+
+	// Print the stream's params based on last sent arbitration
+	client0Stream1deviceId, client0Stream1ElectionId, _ := client0.StreamGetParams(&client0Stream1Name)
+	glog.Infof("'%s' '%s' DeviceId:%d ElectionId:%s",
+		client0Name, client0Stream1Name, client0Stream1deviceId, client0Stream1ElectionId)
 
 	// Load P4Info file
 	p4Info, p4InfoErr := utils.P4InfoLoad(&params.Clients[0].P4InfoFile)
