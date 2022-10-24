@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
@@ -37,6 +38,7 @@ import (
 const (
 	P4RT_MAX_ARBITRATION_QUEUE_SIZE = 100
 	P4RT_MAX_PACKET_QUEUE_SIZE      = 100
+	P4RT_STREAM_TERM_CHAN_SIZE      = 100
 )
 
 type P4RTStreamParameters struct {
@@ -46,12 +48,22 @@ type P4RTStreamParameters struct {
 	ElectionIdL uint64
 }
 
+func (p *P4RTStreamParameters) String() string {
+	return fmt.Sprintf("Name(%s)-DeviceId(%d)-ElectionId(%d:%d)",
+		p.Name, p.DeviceId, p.ElectionIdH, p.ElectionIdL)
+}
+
 type P4RTClientParameters struct {
 	Name       string
 	ServerIP   string
 	ServerPort int
 	P4InfoFile string
 	Streams    []P4RTStreamParameters
+}
+
+func (p *P4RTClientParameters) String() string {
+	return fmt.Sprintf("Name(%s)-%s:%d",
+		p.Name, p.ServerIP, p.ServerPort)
 }
 
 type P4RTParameters struct {
@@ -97,10 +109,26 @@ type P4RTPacketCounters struct {
 	RxPktCntrQueued uint64
 }
 
+type P4RTStreamTermErr struct {
+	ClientParams *P4RTClientParameters
+	StreamParams *P4RTStreamParameters
+	StreamErr    error
+}
+
+func (p *P4RTStreamTermErr) String() string {
+	return fmt.Sprintf("ClientParams(%s) StreamParams(%s) Err(%s)",
+		p.ClientParams, p.StreamParams, p.StreamErr)
+}
+
 type P4RTClientStream struct {
-	Params     P4RTStreamParameters // Make a copy
+	Params     P4RTStreamParameters // Make a copy (initial config)
 	stream     p4_v1.P4Runtime_StreamChannelClient
 	cancelFunc context.CancelFunc
+
+	paramsMu   sync.Mutex     // Protects the following:
+	deviceId   uint64         // Based on last sent Arbitration message
+	electionId *p4_v1.Uint128 // Based on last sent Arbitration message
+	// end paramsMu Protection
 
 	stopMu sync.Mutex // Protects the following:
 	stop   bool
@@ -123,6 +151,43 @@ type P4RTClientStream struct {
 
 func (p *P4RTClientStream) String() string {
 	return fmt.Sprintf("Device(%d) Stream(%s)", p.Params.DeviceId, p.Params.Name)
+}
+
+func (p *P4RTClientStream) SetDeviceId(deviceId uint64) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	p.deviceId = deviceId
+}
+
+func (p *P4RTClientStream) GetDeviceId() uint64 {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	return p.deviceId
+}
+
+func (p *P4RTClientStream) SetElectionId(electionId *p4_v1.Uint128) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	p.electionId = electionId
+}
+
+func (p *P4RTClientStream) GetElectionId() *p4_v1.Uint128 {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	return p.electionId
+}
+
+func (p *P4RTClientStream) SetParams(deviceId uint64, electionId *p4_v1.Uint128) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	p.deviceId = deviceId
+	p.electionId = electionId
+}
+
+func (p *P4RTClientStream) GetParams() (uint64, *p4_v1.Uint128) {
+	p.paramsMu.Lock()
+	defer p.paramsMu.Unlock()
+	return p.deviceId, p.electionId
 }
 
 func (p *P4RTClientStream) ShouldStop() bool {
@@ -298,7 +363,8 @@ func NewP4RTClientStream(params *P4RTStreamParameters, stream p4_v1.P4Runtime_St
 // We want the Client to be more or less stateless so that we can do negative testing
 // This would require the test driver to explicitly set every attribute in every message
 type P4RTClient struct {
-	Params P4RTClientParameters //Make a copy
+	Params        P4RTClientParameters //Make a copy
+	StreamTermErr chan *P4RTStreamTermErr
 
 	client_mu     sync.Mutex // Protects the following:
 	connection    *grpc.ClientConn
@@ -407,6 +473,8 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 
 	// For ever read from stream
 	go func(iStream *P4RTClientStream) {
+		err := errors.New("Stopped by User")
+
 		if glog.V(2) {
 			glog.Infof("'%s' '%s' Started\n", p, iStream)
 		}
@@ -424,8 +492,7 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 			}
 
 			if stream_err != nil {
-				// XXX When the server exits, we get an EOF
-				// What should we do with that? Currently we just exit the routine
+				err = stream_err
 				glog.Warningf("'%s' '%s' Client Recv Error %v\n", p, iStream, stream_err)
 				break
 			}
@@ -456,7 +523,7 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 		if glog.V(1) {
 			glog.Infof("'%s' '%s' Exiting - calling to destroy stream\n", p, iStream)
 		}
-		p.StreamChannelDestroy(&iStream.Params.Name)
+		p.streamChannelDestroyInternal(iStream, err)
 		if glog.V(1) {
 			glog.Infof("'%s' '%s' Exited\n", p, iStream)
 		}
@@ -487,9 +554,33 @@ func (p *P4RTClient) StreamChannelGet(streamName *string) *P4RTClientStream {
 	return nil
 }
 
-// This function can be called from the driver or from the RX routine
-// in case the serve closes the Stream
-// We handle race conditions here (with locks)
+func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rErr error) error {
+	if glog.V(1) {
+		glog.Infof("'%s' Cleaning up '%s'", p, cStream)
+	}
+
+	// Remove from map
+	p.client_mu.Lock()
+	if p.streams != nil {
+		if _, found := p.streams[cStream.Params.Name]; found {
+			delete(p.streams, cStream.Params.Name)
+		}
+	}
+	p.client_mu.Unlock()
+
+	// Notify listener
+	streamParams := cStream.Params // Make a copy
+	clientParams := p.Params
+	// Buffered Channel (will not get stuck unless the receiver is not reading)
+	p.StreamTermErr <- &P4RTStreamTermErr{
+		ClientParams: &clientParams,
+		StreamParams: &streamParams,
+		StreamErr:    rErr,
+	}
+
+	return nil
+}
+
 func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
@@ -501,15 +592,6 @@ func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 	}
 	// Make sure the RX Routine is going to stop
 	cStream.Stop()
-
-	// Remove from map
-	p.client_mu.Lock()
-	if p.streams != nil {
-		if _, found := p.streams[*streamName]; found {
-			delete(p.streams, *streamName)
-		}
-	}
-	p.client_mu.Unlock()
 
 	return nil
 }
@@ -524,6 +606,11 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 		glog.Infof("'%s' '%s' StreamChannelSendMsg: %s\n", p, cStream, msg)
 	}
 	switch msg.Update.(type) {
+	case *p4_v1.StreamMessageRequest_Arbitration:
+		arb := msg.GetArbitration()
+		if arb != nil {
+			cStream.SetParams(arb.GetDeviceId(), arb.GetElectionId())
+		}
 	case *p4_v1.StreamMessageRequest_Packet:
 		pkt := msg.GetPacket()
 		if pkt != nil {
@@ -541,6 +628,17 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 	}
 
 	return nil
+}
+
+func (p *P4RTClient) StreamGetParams(streamName *string) (uint64, *p4_v1.Uint128, error) {
+	cStream := p.streamChannelGet(streamName)
+	if cStream == nil {
+		return 0, nil, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
+	}
+
+	d, e := cStream.GetParams()
+
+	return d, e, nil
 }
 
 // Block until AT LEAST minSeqNum is observed
@@ -686,7 +784,8 @@ func (p *P4RTClient) Read(msg *p4_v1.ReadRequest) (p4_v1.P4Runtime_ReadClient, e
 //
 func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 	client := &P4RTClient{
-		Params: *params,
+		Params:        *params,
+		StreamTermErr: make(chan *P4RTStreamTermErr, P4RT_STREAM_TERM_CHAN_SIZE),
 	}
 
 	return client
