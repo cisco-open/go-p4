@@ -631,7 +631,7 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 }
 
 func (p *P4RTClient) StreamGetParams(streamName *string) (uint64, *p4_v1.Uint128, error) {
-	cStream := p.streamChannelGet(streamName)
+	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return 0, nil, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
