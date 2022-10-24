@@ -292,6 +292,37 @@ func main() {
 		}
 	}
 
+	// We can also get a reference to the stream and use it directly
+	client0Stream0 := client0.StreamChannelGet(&client0Stream0Name)
+	if client0Stream0 == nil {
+		glog.Fatalf("'%s' nil stream", client0Stream0Name)
+	}
+
+	arbCntrs := client0Stream0.GetArbCounters()
+	glog.Infof("stream '%s' Arbitration Counters RxArbCntr(%d) RxArbCntrDrop(%d) RxArbCntrQueued(%d)",
+		client0Stream0Name, arbCntrs.RxArbCntr, arbCntrs.RxArbCntrDrop, arbCntrs.RxArbCntrQueued)
+
+	qSize := 200
+	// Set the Arbitration queue size (in case default is not enough)
+	client0Stream0.SetArbQSize(qSize)
+	qSizeRead := client0Stream0.GetArbQSize()
+	if qSize != qSizeRead {
+		glog.Fatalf("Stream '%s' expecting Arbitration qSize(%d) Got (%d)",
+			client0Stream0Name, qSize, qSizeRead)
+	}
+
+	pktCntrs := client0Stream0.GetPacketCounters()
+	glog.Infof("stream '%s' Packet Counters RxPktCntr(%d) RxPktCntrDrop(%d) RxPktCntrQueued(%d)",
+		client0Stream0Name, pktCntrs.RxPktCntr, pktCntrs.RxPktCntrDrop, pktCntrs.RxPktCntrQueued)
+
+	// Set the packet queue size (in case default is not enough)
+	client0Stream0.SetPacketQSize(qSize)
+	qSizeRead = client0Stream0.GetPacketQSize()
+	if qSize != qSizeRead {
+		glog.Fatalf("Stream '%s' expecting Packet qSize(%d) Got (%d)",
+			client0Stream0Name, qSize, qSizeRead)
+	}
+
 	counter := 0
 ForEver:
 	for {
