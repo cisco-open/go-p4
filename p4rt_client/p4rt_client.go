@@ -198,8 +198,14 @@ func (p *P4RTClientStream) ShouldStop() bool {
 
 func (p *P4RTClientStream) Stop() {
 	p.stopMu.Lock()
-	defer p.stopMu.Unlock()
 	p.stop = true
+	p.stopMu.Unlock()
+
+	// Force the RX Recv() to wake up
+	// (which would force the RX routing to Destroy and exit)
+	if p.cancelFunc != nil {
+		p.cancelFunc()
+	}
 }
 
 // XXX Do we need a callback function to avoid polling?
@@ -535,7 +541,7 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 	return nil
 }
 
-func (p *P4RTClient) streamChannelGet(streamName *string) *P4RTClientStream {
+func (p *P4RTClient) StreamChannelGet(streamName *string) *P4RTClientStream {
 	p.client_mu.Lock()
 	defer p.client_mu.Unlock()
 
@@ -576,7 +582,7 @@ func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rEr
 }
 
 func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
-	cStream := p.streamChannelGet(streamName)
+	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
@@ -586,15 +592,12 @@ func (p *P4RTClient) StreamChannelDestroy(streamName *string) error {
 	}
 	// Make sure the RX Routine is going to stop
 	cStream.Stop()
-	// Force the RX Recv() to wake up
-	// (which would force the RX routing to Destroy and exit)
-	cStream.cancelFunc()
 
 	return nil
 }
 
 func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamMessageRequest) error {
-	cStream := p.streamChannelGet(streamName)
+	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
@@ -628,7 +631,7 @@ func (p *P4RTClient) StreamChannelSendMsg(streamName *string, msg *p4_v1.StreamM
 }
 
 func (p *P4RTClient) StreamGetParams(streamName *string) (uint64, *p4_v1.Uint128, error) {
-	cStream := p.streamChannelGet(streamName)
+	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return 0, nil, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
@@ -647,7 +650,7 @@ func (p *P4RTClient) StreamChannelGetArbitrationResp(streamName *string,
 	var seqNum uint64
 	var respArbr *P4RTArbInfo
 
-	cStream := p.streamChannelGet(streamName)
+	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return seqNum, respArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
@@ -663,7 +666,7 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 	var seqNum uint64
 	var pktInfo *P4RTPacketInfo
 
-	cStream := p.streamChannelGet(streamName)
+	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return seqNum, pktInfo, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
