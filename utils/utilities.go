@@ -20,7 +20,7 @@ package utils
 
 import (
 	"github.com/golang/glog"
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/encoding/prototext"
 	p4_v1_config "github.com/p4lang/p4runtime/go/p4/config/v1"
 	"io/ioutil"
 )
@@ -32,7 +32,7 @@ func P4InfoLoad(fileName *string) (p4_v1_config.P4Info, error) {
 	if err != nil {
 		glog.Errorf("Could not open file %s", *fileName)
 	} else {
-		err = proto.UnmarshalText(string(p4infoFile), &p4Info)
+		err = prototext.Unmarshal(p4infoFile, &p4Info)
 	}
 
 	return p4Info, err
