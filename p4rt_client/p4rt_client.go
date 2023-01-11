@@ -24,15 +24,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"reflect"
+	"strconv"
+	"sync"
+
 	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status1 "google.golang.org/grpc/status"
-	"io/ioutil"
-	"reflect"
-	"strconv"
-	"sync"
 )
 
 const (
@@ -199,6 +200,15 @@ func (p *P4RTClientStream) ShouldStop() bool {
 func (p *P4RTClientStream) Stop() {
 	p.stopMu.Lock()
 	p.stop = true
+
+	// Signal any waiting GetArbitration or GetPacket routines.
+	p.arb_mu.Lock()
+	p.arbCond.Signal()
+	p.arb_mu.Unlock()
+	p.pkt_mu.Lock()
+	p.pktCond.Signal()
+	p.pkt_mu.Unlock()
+
 	p.stopMu.Unlock()
 
 	// Force the RX Recv() to wake up
@@ -247,6 +257,9 @@ func (p *P4RTClientStream) GetArbitration(minSeqNum uint64) (uint64, *P4RTArbInf
 		if glog.V(2) {
 			glog.Infof("'%s' Waiting on Arbitration message (%d/%d)\n",
 				p, p.arbCounters.RxArbCntr, minSeqNum)
+		}
+		if p.ShouldStop() {
+			return 0, nil
 		}
 		p.arbCond.Wait()
 	}
@@ -314,6 +327,9 @@ func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo)
 		if glog.V(2) {
 			glog.Infof("'%s' Waiting on Packet (%d/%d)\n",
 				p, p.pktCounters.RxPktCntr, minSeqNum)
+		}
+		if p.ShouldStop() {
+			return 0, nil
 		}
 		p.pktCond.Wait()
 	}
@@ -563,6 +579,7 @@ func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rEr
 	p.client_mu.Lock()
 	if p.streams != nil {
 		if _, found := p.streams[cStream.Params.Name]; found {
+			cStream.Stop()
 			delete(p.streams, cStream.Params.Name)
 		}
 	}
@@ -779,9 +796,7 @@ func (p *P4RTClient) Read(msg *p4_v1.ReadRequest) (p4_v1.P4Runtime_ReadClient, e
 	return stream, err
 }
 
-//
 // Creates and Initializes a P4RT client
-//
 func NewP4RTClient(params *P4RTClientParameters) *P4RTClient {
 	client := &P4RTClient{
 		Params:        *params,
