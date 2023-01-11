@@ -673,6 +673,9 @@ func (p *P4RTClient) StreamChannelGetArbitrationResp(streamName *string,
 	}
 
 	seqNum, respArbr = cStream.GetArbitration(minSeqNum)
+	if respArbr == nil {
+		return seqNum, nil, fmt.Errorf("%q Stream terminated: %s\n", p, *streamName)
+	}
 
 	return seqNum, respArbr, nil
 }
@@ -689,6 +692,9 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 	}
 
 	seqNum, pktInfo = cStream.GetPacket(minSeqNum)
+	if pktInfo == nil {
+		return seqNum, nil, fmt.Errorf("%q Stream terminated: %s\n", p, *streamName)
+	}
 
 	return seqNum, pktInfo, nil
 }
