@@ -200,16 +200,17 @@ func (p *P4RTClientStream) ShouldStop() bool {
 func (p *P4RTClientStream) Stop() {
 	p.stopMu.Lock()
 	p.stop = true
+	p.stopMu.Unlock()
 
-	// Signal any waiting GetArbitration or GetPacket routines.
+	// Signal waiting GetArbitration routines.
 	p.arb_mu.Lock()
 	p.arbCond.Signal()
 	p.arb_mu.Unlock()
+
+	// Signal waiting GetPacket routines.
 	p.pkt_mu.Lock()
 	p.pktCond.Signal()
 	p.pkt_mu.Unlock()
-
-	p.stopMu.Unlock()
 
 	// Force the RX Recv() to wake up
 	// (which would force the RX routing to Destroy and exit)
@@ -579,7 +580,6 @@ func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rEr
 	p.client_mu.Lock()
 	if p.streams != nil {
 		if _, found := p.streams[cStream.Params.Name]; found {
-			cStream.Stop()
 			delete(p.streams, cStream.Params.Name)
 		}
 	}
@@ -589,11 +589,15 @@ func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rEr
 	streamParams := cStream.Params // Make a copy
 	clientParams := p.Params
 	// Buffered Channel (will not get stuck unless the receiver is not reading)
-	p.StreamTermErr <- &P4RTStreamTermErr{
-		ClientParams: &clientParams,
-		StreamParams: &streamParams,
-		StreamErr:    rErr,
+	if p.StreamTermErr != nil {
+		p.StreamTermErr <- &P4RTStreamTermErr{
+			ClientParams: &clientParams,
+			StreamParams: &streamParams,
+			StreamErr:    rErr,
+		}
 	}
+
+	cStream.Stop()
 
 	return nil
 }
