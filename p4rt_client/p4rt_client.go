@@ -571,6 +571,18 @@ func (p *P4RTClient) StreamChannelGet(streamName *string) *P4RTClientStream {
 }
 
 func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rErr error) error {
+	// Notify listener
+	streamParams := cStream.Params // Make a copy
+	clientParams := p.Params
+	// Buffered Channel (will not get stuck unless the receiver is not reading)
+	if p.StreamTermErr != nil {
+		p.StreamTermErr <- &P4RTStreamTermErr{
+			ClientParams: &clientParams,
+			StreamParams: &streamParams,
+			StreamErr:    rErr,
+		}
+	}
+
 	if glog.V(1) {
 		glog.Infof("'%s' Cleaning up '%s'", p, cStream)
 	}
@@ -584,16 +596,6 @@ func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rEr
 		}
 	}
 	p.client_mu.Unlock()
-
-	// Notify listener
-	streamParams := cStream.Params // Make a copy
-	clientParams := p.Params
-	// Buffered Channel (will not get stuck unless the receiver is not reading)
-	p.StreamTermErr <- &P4RTStreamTermErr{
-		ClientParams: &clientParams,
-		StreamParams: &streamParams,
-		StreamErr:    rErr,
-	}
 
 	return nil
 }
