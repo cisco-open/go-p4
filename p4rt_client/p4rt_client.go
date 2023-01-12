@@ -571,6 +571,19 @@ func (p *P4RTClient) StreamChannelGet(streamName *string) *P4RTClientStream {
 }
 
 func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rErr error) error {
+	if glog.V(1) {
+		glog.Infof("'%s' Cleaning up '%s'", p, cStream)
+	}
+
+	// Remove from map
+	p.client_mu.Lock()
+	if p.streams != nil {
+		if _, found := p.streams[cStream.Params.Name]; found {
+			delete(p.streams, cStream.Params.Name)
+		}
+	}
+	p.client_mu.Unlock()
+
 	// Notify listener
 	streamParams := cStream.Params // Make a copy
 	clientParams := p.Params
@@ -583,19 +596,7 @@ func (p *P4RTClient) streamChannelDestroyInternal(cStream *P4RTClientStream, rEr
 		}
 	}
 
-	if glog.V(1) {
-		glog.Infof("'%s' Cleaning up '%s'", p, cStream)
-	}
-
-	// Remove from map
-	p.client_mu.Lock()
-	if p.streams != nil {
-		if _, found := p.streams[cStream.Params.Name]; found {
-			cStream.Stop()
-			delete(p.streams, cStream.Params.Name)
-		}
-	}
-	p.client_mu.Unlock()
+	cStream.Stop()
 
 	return nil
 }
