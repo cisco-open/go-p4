@@ -200,16 +200,17 @@ func (p *P4RTClientStream) ShouldStop() bool {
 func (p *P4RTClientStream) Stop() {
 	p.stopMu.Lock()
 	p.stop = true
+	p.stopMu.Unlock()
 
-	// Signal any waiting GetArbitration or GetPacket routines.
+	// Signal waiting GetArbitration routines.
 	p.arb_mu.Lock()
 	p.arbCond.Signal()
 	p.arb_mu.Unlock()
+
+	// Signal waiting GetPacket routines.
 	p.pkt_mu.Lock()
 	p.pktCond.Signal()
 	p.pkt_mu.Unlock()
-
-	p.stopMu.Unlock()
 
 	// Force the RX Recv() to wake up
 	// (which would force the RX routing to Destroy and exit)
