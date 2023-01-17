@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"reflect"
 	"strconv"
@@ -697,7 +698,10 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 
 	seqNum, pktInfo = cStream.GetPacket(minSeqNum)
 	if pktInfo == nil {
-		return seqNum, nil, fmt.Errorf("%q Stream terminated: %s\n", p, *streamName)
+		if glog.V(2) {
+			glog.Infof("%q Stream terminated: %s\n", p, *streamName)
+		}
+		return seqNum, nil, io.EOF
 	}
 
 	return seqNum, pktInfo, nil
