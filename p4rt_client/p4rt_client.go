@@ -679,7 +679,10 @@ func (p *P4RTClient) StreamChannelGetArbitrationResp(streamName *string,
 
 	seqNum, respArbr = cStream.GetArbitration(minSeqNum)
 	if respArbr == nil {
-		return seqNum, nil, fmt.Errorf("%q Stream terminated: %s\n", p, *streamName)
+		if glog.V(2) {
+			glog.Infof("%q Stream terminated: %s\n", p, *streamName)
+		}
+		return seqNum, nil, io.EOF
 	}
 
 	return seqNum, respArbr, nil

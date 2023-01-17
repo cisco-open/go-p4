@@ -25,6 +25,7 @@ import (
 	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	codes "google.golang.org/grpc/codes"
+	"io"
 	"net"
 	"os"
 	"time"
@@ -63,7 +64,7 @@ func main() {
 	// Check primary state
 	glog.Infof("'%s' Checking Primary state", client0)
 	lastSeqNum0, arbMsg0, arbErr0 := client0.StreamChannelGetArbitrationResp(&client0Stream0Name, 1)
-	if arbErr0 != nil {
+	if arbErr0 != nil && arbErr0 != io.EOF {
 		glog.Fatal(arbErr0)
 	}
 	if arbMsg0 == nil {
@@ -81,7 +82,7 @@ func main() {
 	// Let's see what Client0 stream1 has received as last arbitration
 	// Stream1 should have preempted
 	lastSeqNum1, arbMsg1, arbErr1 := client0.StreamChannelGetArbitrationResp(&client0Stream1Name, 1)
-	if arbErr1 != nil {
+	if arbErr1 != nil && arbErr0 != io.EOF {
 		glog.Fatal(arbErr1)
 	}
 	if arbMsg1 == nil {
@@ -170,7 +171,7 @@ func main() {
 									},
 								},
 							},
-                                                        Priority: 1,
+							Priority: 1,
 						},
 					},
 				},
@@ -206,7 +207,7 @@ func main() {
 									},
 								},
 							},
-                                                        Priority: 1,
+							Priority: 1,
 						},
 					},
 				},
@@ -227,7 +228,7 @@ func main() {
 	rStream, rErr := client0.Read(&p4_v1.ReadRequest{
 		DeviceId: arbMsg1.Arb.DeviceId,
 		Entities: []*p4_v1.Entity{
-			&p4_v1.Entity{
+			{
 				Entity: &p4_v1.Entity_TableEntry{},
 			},
 		},
@@ -259,7 +260,7 @@ func main() {
 						net.IP{10, 0, 0, 2},
 						64),
 					Metadata: []*p4_v1.PacketMetadata{
-						&p4_v1.PacketMetadata{
+						{
 							MetadataId: 2, // "submit_to_ingress"
 							Value:      []byte{0x1},
 						},
@@ -273,7 +274,7 @@ func main() {
 
 	// Get the last sequence number received so far
 	lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetArbitrationResp(&client0Stream0Name, 0)
-	if arbErr0 != nil {
+	if arbErr0 != nil && arbErr0 != io.EOF {
 		glog.Fatal(arbErr0)
 	}
 	if arbMsg0 != nil {
@@ -291,7 +292,7 @@ func main() {
 	lastSeqNum0 = lastSeqNum0 + 1
 	for {
 		lastSeqNum0, arbMsg0, arbErr0 = client0.StreamChannelGetArbitrationResp(&client0Stream0Name, lastSeqNum0)
-		if arbErr0 != nil {
+		if arbErr0 != nil && arbErr0 != io.EOF {
 			glog.Fatal(arbErr0)
 		}
 		if arbMsg0 != nil {
@@ -358,7 +359,7 @@ ForEver:
 								net.IP{10, 0, 0, 2},
 								64),
 							Metadata: []*p4_v1.PacketMetadata{
-								&p4_v1.PacketMetadata{
+								{
 									MetadataId: 1,            // "egress_port"
 									Value:      []byte("24"), // Port-id As configured
 								},
