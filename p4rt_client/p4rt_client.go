@@ -251,7 +251,7 @@ func (p *P4RTClientStream) GetArbCounters() *P4RTArbCounters {
 	return &arbCounters
 }
 
-func (p *P4RTClientStream) GetArbitration(minSeqNum uint64) (uint64, *P4RTArbInfo) {
+func (p *P4RTClientStream) GetArbitration(minSeqNum uint64) (uint64, *P4RTArbInfo, error) {
 	p.arb_mu.Lock()
 	defer p.arb_mu.Unlock()
 
@@ -261,19 +261,19 @@ func (p *P4RTClientStream) GetArbitration(minSeqNum uint64) (uint64, *P4RTArbInf
 				p, p.arbCounters.RxArbCntr, minSeqNum)
 		}
 		if p.ShouldStop() {
-			return 0, nil
+			return 0, nil, io.EOF
 		}
 		p.arbCond.Wait()
 	}
 
 	if len(p.arbQ) == 0 {
-		return p.arbCounters.RxArbCntr, nil
+		return p.arbCounters.RxArbCntr, nil, nil
 	}
 
 	arbInfo := p.arbQ[0]
 	p.arbQ = p.arbQ[1:]
 
-	return p.arbCounters.RxArbCntr, arbInfo
+	return p.arbCounters.RxArbCntr, arbInfo, nil
 }
 
 func (p *P4RTClientStream) SetArbQSize(size int) {
@@ -321,7 +321,7 @@ func (p *P4RTClientStream) GetPacketCounters() *P4RTPacketCounters {
 	return &pktCounters
 }
 
-func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo) {
+func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo, error) {
 	p.pkt_mu.Lock()
 	defer p.pkt_mu.Unlock()
 
@@ -331,19 +331,19 @@ func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo)
 				p, p.pktCounters.RxPktCntr, minSeqNum)
 		}
 		if p.ShouldStop() {
-			return 0, nil
+			return 0, nil, io.EOF
 		}
 		p.pktCond.Wait()
 	}
 
 	if len(p.pktQ) == 0 {
-		return p.pktCounters.RxPktCntr, nil
+		return p.pktCounters.RxPktCntr, nil, nil
 	}
 
 	pktInfo := p.pktQ[0]
 	p.pktQ = p.pktQ[1:]
 
-	return p.pktCounters.RxPktCntr, pktInfo
+	return p.pktCounters.RxPktCntr, pktInfo, nil
 }
 
 func (p *P4RTClientStream) SetPacketQSize(size int) {
@@ -671,18 +671,19 @@ func (p *P4RTClient) StreamChannelGetArbitrationResp(streamName *string,
 
 	var seqNum uint64
 	var respArbr *P4RTArbInfo
+	var err error
 
 	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return seqNum, respArbr, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
-	seqNum, respArbr = cStream.GetArbitration(minSeqNum)
-	if respArbr == nil {
+	seqNum, respArbr, err = cStream.GetArbitration(minSeqNum)
+	if err != nil {
 		if glog.V(2) {
-			glog.Infof("%q Stream terminated: %s\n", p, *streamName)
+			glog.Infof("%q Stream(%s) Error: %s\n", p, *streamName, err)
 		}
-		return seqNum, nil, io.EOF
+		return seqNum, nil, err
 	}
 
 	return seqNum, respArbr, nil
@@ -693,18 +694,19 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 
 	var seqNum uint64
 	var pktInfo *P4RTPacketInfo
+	var err error
 
 	cStream := p.StreamChannelGet(streamName)
 	if cStream == nil {
 		return seqNum, pktInfo, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
 	}
 
-	seqNum, pktInfo = cStream.GetPacket(minSeqNum)
-	if pktInfo == nil {
+	seqNum, pktInfo, err = cStream.GetPacket(minSeqNum)
+	if err != nil {
 		if glog.V(2) {
-			glog.Infof("%q Stream terminated: %s\n", p, *streamName)
+			glog.Infof("%q Stream(%s) Error: %s\n", p, *streamName, err)
 		}
-		return seqNum, nil, io.EOF
+		return seqNum, nil, err
 	}
 
 	return seqNum, pktInfo, nil
