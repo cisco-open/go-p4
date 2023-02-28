@@ -353,8 +353,9 @@ func (p *P4RTClientStream) GetPacketsWithTimeout(minSeqNum uint64, timeout time.
 	done := make(chan struct{})
 	defer close(done)
 	var failed atomic.Bool
-	failed.Load()
 
+	// routine returns directly if 'done' else updates 'failed'
+	// and signals pktCond.
 	go func() {
 		select {
 		case <-done:
@@ -368,6 +369,7 @@ func (p *P4RTClientStream) GetPacketsWithTimeout(minSeqNum uint64, timeout time.
 	p.pkt_mu.Lock()
 	defer p.pkt_mu.Unlock()
 	for p.pktCounters.RxPktCntr < minSeqNum {
+		// if timeout then loop breaks here.
 		if failed.Load() {
 			break
 		}
