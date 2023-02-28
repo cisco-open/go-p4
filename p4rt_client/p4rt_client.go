@@ -29,6 +29,8 @@ import (
 	"reflect"
 	"strconv"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/golang/glog"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
@@ -344,6 +346,49 @@ func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo,
 	p.pktQ = p.pktQ[1:]
 
 	return p.pktCounters.RxPktCntr, pktInfo, nil
+}
+
+func (p *P4RTClientStream) GetPacketsWithTimeout(minSeqNum uint64, timeout time.Duration) (uint64, []*P4RTPacketInfo, error) {
+
+	done := make(chan struct{})
+	defer close(done)
+	var failed atomic.Bool
+	failed.Load()
+
+	go func() {
+		select {
+		case <-done:
+			return
+		case <-time.After(timeout):
+			failed.Store(true)
+			p.pktCond.Signal()
+		}
+	}()
+
+	p.pkt_mu.Lock()
+	defer p.pkt_mu.Unlock()
+	for p.pktCounters.RxPktCntr < minSeqNum {
+		if failed.Load() {
+			break
+		}
+		if glog.V(2) {
+			glog.Infof("'%s' Waiting on Packet (%d/%d)\n",
+				p, p.pktCounters.RxPktCntr, minSeqNum)
+		}
+		if p.ShouldStop() {
+			return 0, nil, io.EOF
+		}
+		p.pktCond.Wait()
+	}
+
+	var pkts []*P4RTPacketInfo
+
+	for i := 0; i < len(p.pktQ); i++ {
+		pkts = append(pkts, p.pktQ[i])
+	}
+	p.pktQ = []*P4RTPacketInfo{}
+
+	return p.pktCounters.RxPktCntr, pkts, nil
 }
 
 func (p *P4RTClientStream) SetPacketQSize(size int) {
@@ -710,6 +755,27 @@ func (p *P4RTClient) StreamChannelGetPacket(streamName *string,
 	}
 
 	return seqNum, pktInfo, nil
+}
+
+func (p *P4RTClient) StreamChannelGetPackets(streamName *string,
+	minSeqNum uint64, timeout time.Duration) (uint64, []*P4RTPacketInfo, error) {
+
+	var seqNum uint64
+	var pkts []*P4RTPacketInfo
+	var err error
+
+	cStream := p.StreamChannelGet(streamName)
+	if cStream == nil {
+		return seqNum, pkts, fmt.Errorf("'%s' Could not find stream(%s)\n", p, *streamName)
+	}
+	seqNum, pkts, err = cStream.GetPacketsWithTimeout(minSeqNum, timeout)
+	if err != nil {
+		if glog.V(2) {
+			glog.Infof("%q Stream(%s) Error: %s\n", p, *streamName, err)
+		}
+	}
+
+	return seqNum, pkts, nil
 }
 
 func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelineConfigRequest) error {
