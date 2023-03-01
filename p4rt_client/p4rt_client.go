@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"os"
 	"reflect"
 	"strconv"
 	"sync"
@@ -212,7 +213,7 @@ func (p *P4RTClientStream) Stop() {
 
 	// Signal waiting GetPacket routines.
 	p.pkt_mu.Lock()
-	p.pktCond.Signal()
+	p.pktCond.Broadcast()
 	p.pkt_mu.Unlock()
 
 	// Force the RX Recv() to wake up
@@ -312,7 +313,7 @@ func (p *P4RTClientStream) QueuePacket(pktInfo *P4RTPacketInfo) {
 
 	p.pkt_mu.Unlock()
 
-	p.pktCond.Signal()
+	p.pktCond.Broadcast()
 }
 
 func (p *P4RTClientStream) GetPacketCounters() *P4RTPacketCounters {
@@ -323,6 +324,11 @@ func (p *P4RTClientStream) GetPacketCounters() *P4RTPacketCounters {
 	return &pktCounters
 }
 
+// GetPacket returns the receivedPacketCounter, the first Packet in Queue and
+// an error if any.
+// The method blocks until minSeqNum number of packets are received.
+// It is advisable to call only one of either GetPacket() or GetPacketsWithTimeout()
+// as a timeout in GetPacketsWithTimeout() may also unblock GetPacket()
 func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo, error) {
 	p.pkt_mu.Lock()
 	defer p.pkt_mu.Unlock()
@@ -348,6 +354,12 @@ func (p *P4RTClientStream) GetPacket(minSeqNum uint64) (uint64, *P4RTPacketInfo,
 	return p.pktCounters.RxPktCntr, pktInfo, nil
 }
 
+// GetPacketsWithTimeout returns the receivedPacketCounter, the list of Packets
+// in Queue and an error if any.
+// If timeout happens before minSeqNum of packets are received, the current Packets
+// in queue are returned along with a DeadlineExceeded error.
+// It is advisable to call only one of either GetPacket() or GetPacketsWithTimeout()
+// as a timeout in GetPacketsWithTimeout() may also unblock GetPacket()
 func (p *P4RTClientStream) GetPacketsWithTimeout(minSeqNum uint64, timeout time.Duration) (uint64, []*P4RTPacketInfo, error) {
 
 	done := make(chan struct{})
@@ -362,7 +374,7 @@ func (p *P4RTClientStream) GetPacketsWithTimeout(minSeqNum uint64, timeout time.
 			return
 		case <-time.After(timeout):
 			failed.Store(true)
-			p.pktCond.Signal()
+			p.pktCond.Broadcast()
 		}
 	}()
 
@@ -390,6 +402,9 @@ func (p *P4RTClientStream) GetPacketsWithTimeout(minSeqNum uint64, timeout time.
 	}
 	p.pktQ = []*P4RTPacketInfo{}
 
+	if failed.Load() {
+		return p.pktCounters.RxPktCntr, pkts, os.ErrDeadlineExceeded
+	}
 	return p.pktCounters.RxPktCntr, pkts, nil
 }
 
@@ -524,6 +539,7 @@ func (p *P4RTClient) StreamChannelCreate(params *P4RTStreamParameters) error {
 	stream, gerr := p.p4rtClient.StreamChannel(ctx)
 	if gerr != nil {
 		glog.Errorf("'%s' StreamChannel: %s", p, gerr)
+		cancelFunc()
 		p.client_mu.Unlock()
 		return gerr
 	}
