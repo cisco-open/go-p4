@@ -793,7 +793,7 @@ func (p *P4RTClient) StreamChannelGetPackets(streamName *string,
 		}
 	}
 
-	return seqNum, pkts, nil
+	return seqNum, pkts, err
 }
 
 func (p *P4RTClient) SetForwardingPipelineConfig(msg *p4_v1.SetForwardingPipelineConfigRequest) error {
