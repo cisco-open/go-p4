@@ -25,7 +25,7 @@ import (
 	"io/ioutil"
 )
 
-func P4InfoLoad(fileName *string) (p4_v1_config.P4Info, error) {
+func P4InfoLoad(fileName *string) (*p4_v1_config.P4Info, error) {
 	var p4Info p4_v1_config.P4Info
 
 	p4infoFile, err := ioutil.ReadFile(*fileName)
@@ -34,6 +34,5 @@ func P4InfoLoad(fileName *string) (p4_v1_config.P4Info, error) {
 	} else {
 		err = prototext.Unmarshal(p4infoFile, &p4Info)
 	}
-
-	return p4Info, err
+	return &p4Info, err
 }
