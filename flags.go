@@ -28,6 +28,8 @@ import (
 var (
 	serverIP   = flag.String("server_ip", "127.0.0.1", "P4RT Server IP")
 	serverPort = flag.Int("server_port", 57400, "P4RT Server Port")
+	username   = flag.String("username", "", "Server username")
+	password   = flag.String("password", "", "Server password")
 	jsonFile   = flag.String("json_file", "./json/example.json", "JSON Params File Path")
 )
 
