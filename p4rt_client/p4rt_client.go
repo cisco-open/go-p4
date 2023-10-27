@@ -55,6 +55,7 @@ const (
 type flagCred struct {
 	username string
 	password string
+	tls      bool
 }
 
 // GetRequestMetadata is needed by credentials.PerRPCCredentials.
@@ -68,7 +69,7 @@ func (s flagCred) GetRequestMetadata(ctx context.Context, uri ...string) (map[st
 
 // RequireTransportSecurity is needed by credentials.PerRPCCredentials.
 func (s flagCred) RequireTransportSecurity() bool {
-	return false
+	return s.tls
 }
 
 type P4RTStreamParameters struct {
@@ -87,8 +88,6 @@ type P4RTClientParameters struct {
 	Name       string
 	ServerIP   string
 	ServerPort int
-	Username   string
-	Password   string
 	P4InfoFile string
 	Streams    []P4RTStreamParameters
 }
@@ -572,7 +571,8 @@ func (p *P4RTClient) ServerConnectWithOptions(insec bool, skipVerify bool, usern
 		}
 		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(flagCred{
 			username: username,
-			password: password}))
+			password: password,
+			tls:      !insec}))
 	}
 
 	// Retry
@@ -585,7 +585,7 @@ func (p *P4RTClient) ServerConnectWithOptions(insec bool, skipVerify bool, usern
 	// Dial context
 	ctx := context.Background()
 	if glog.V(1) {
-		glog.Infof("Setting dial context: (if stuck check TLS config)", p.getAddress())
+		glog.Infof("Setting dial context: (if stuck check TLS config): %s", p.getAddress())
 	}
 	conn, err := grpc.DialContext(ctx, p.getAddress(), dialOpts...)
 	if err != nil {
