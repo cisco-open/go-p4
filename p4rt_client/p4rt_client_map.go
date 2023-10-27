@@ -62,7 +62,7 @@ func (p *P4RTClientMap) ClientGet(clientName *string) (*P4RTClient, error) {
 }
 
 // Helper function to bootstrap things from a JSON file
-func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverPort int) (*P4RTParameters, error) {
+func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverPort int, username string, password string) (*P4RTParameters, error) {
 	// Read params JSON file to configure the setup
 	params, err := P4RTParameterLoad(jsonFile)
 	if err != nil {
@@ -88,7 +88,11 @@ func (p *P4RTClientMap) InitfromJson(jsonFile *string, serverIP *string, serverP
 		}
 
 		// Connect
-		err = newClient.ServerConnect()
+		if password == "" {
+			err = newClient.ServerConnect()
+		} else {
+			err = newClient.ServerConnectWithOptions(true, false, username, password)
+		}
 		if err != nil {
 			glog.Errorf("Could not Connect Client at Index(%d) %s", index, err)
 			return nil, err

@@ -20,6 +20,7 @@ package p4rt_client
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -34,9 +35,12 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	p4_v1 "github.com/p4lang/p4runtime/go/p4/v1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	status1 "google.golang.org/grpc/status"
 )
 
@@ -45,6 +49,28 @@ const (
 	P4RT_MAX_PACKET_QUEUE_SIZE      = 100
 	P4RT_STREAM_TERM_CHAN_SIZE      = 100
 )
+
+// flagCred implements credentials.PerRPCCredentials by populating the
+// username and password metadata from flags.
+type flagCred struct {
+	username string
+	password string
+	tls      bool
+}
+
+// GetRequestMetadata is needed by credentials.PerRPCCredentials.
+func (s flagCred) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	// We can pass any metadata to the server here
+	return map[string]string{
+		"username": s.username,
+		"password": s.password,
+	}, nil
+}
+
+// RequireTransportSecurity is needed by credentials.PerRPCCredentials.
+func (s flagCred) RequireTransportSecurity() bool {
+	return s.tls
+}
 
 type P4RTStreamParameters struct {
 	Name        string
@@ -492,6 +518,81 @@ func (p *P4RTClient) ServerConnect() error {
 		glog.Errorf("'%s' Connecting to Server: %s", p, err)
 		return err
 	}
+	p.connection = conn
+	if glog.V(1) {
+		glog.Infof("'%s' Connected to Server", p)
+	}
+
+	// Create a new P4RuntimeClient instance
+	p.p4rtClient = p4_v1.NewP4RuntimeClient(conn)
+
+	return nil
+}
+
+func (p *P4RTClient) ServerConnectWithOptions(insec bool, skipVerify bool, username string, password string) error {
+	p.client_mu.Lock()
+	defer p.client_mu.Unlock()
+
+	if (p.connection != nil) || p.connectionSet {
+		return fmt.Errorf("'%s' Client Already connected", p)
+	}
+
+	if glog.V(2) {
+		glog.Infof("'%s' Connecting to Server\n", p)
+	}
+
+	// Setup dial options
+	dialOpts := []grpc.DialOption{grpc.WithBlock()}
+
+	// TLS
+	if insec {
+		if glog.V(1) {
+			glog.Infof("no TLS")
+		}
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else if skipVerify {
+		if glog.V(1) {
+			glog.Infof("TLS and Skip Verify")
+		}
+		tlsc := credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: skipVerify,
+		})
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(tlsc))
+	} else {
+		if glog.V(1) {
+			glog.Infof("TLS and not skipping verify")
+		}
+	}
+
+	// Per RPC credentials
+	if password != "" {
+		if glog.V(1) {
+			glog.Infof("Using Per RPC Credentials")
+		}
+		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(flagCred{
+			username: username,
+			password: password,
+			tls:      !insec}))
+	}
+
+	// Retry
+	retryOpt := grpc_retry.WithPerRetryTimeout(5 * time.Second)
+	dialOpts = append(dialOpts,
+		grpc.WithStreamInterceptor(grpc_retry.StreamClientInterceptor(retryOpt)),
+		grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpt)),
+	)
+
+	// Dial context
+	ctx := context.Background()
+	if glog.V(1) {
+		glog.Infof("Setting dial context: (if stuck check TLS config): %s", p.getAddress())
+	}
+	conn, err := grpc.DialContext(ctx, p.getAddress(), dialOpts...)
+	if err != nil {
+		glog.Errorf("'%s' Connecting to Server: %s", p, err)
+		return err
+	}
+
 	p.connection = conn
 	if glog.V(1) {
 		glog.Infof("'%s' Connected to Server", p)

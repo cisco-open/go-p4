@@ -39,7 +39,7 @@ func main() {
 	glog.Infof("Called as: %s", os.Args)
 
 	clientMap := p4rt_client.NewP4RTClientMap()
-	params, err := clientMap.InitfromJson(jsonFile, serverIP, *serverPort)
+	params, err := clientMap.InitfromJson(jsonFile, serverIP, *serverPort, *username, *password)
 	if err != nil {
 		glog.Fatal(err)
 	}
