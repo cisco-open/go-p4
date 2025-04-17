@@ -1,7 +1,7 @@
 module github.com/cisco-open/go-p4
 
 go 1.21
-toolchain go1.23.7
+toolchain go1.24.1
 
 require (
 	github.com/golang/glog v1.2.4
@@ -14,8 +14,8 @@ require (
 
 require (
 	github.com/golang/protobuf v1.5.3 // indirect
-	golang.org/x/net v0.36.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
 )
